@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useState,
   type PropsWithChildren,
 } from "react";
 import type {
@@ -14,6 +15,7 @@ import type {
   RecentRecordItem,
   ReportBiomarkerGroupItem,
 } from "@/components/health/sections";
+import { createHealthApi } from "@/lib/api/healthApi";
 
 type ExamType = "Routine" | "Clinical";
 type SceneType = "DAILY" | "INPATIENT" | "ROUTINE";
@@ -100,6 +102,7 @@ export type HealthAppState = {
 };
 
 type Action =
+  | { type: "hydrate"; state: HealthAppState }
   | { type: "auth/loginField"; field: keyof AuthDraft; value: string }
   | { type: "auth/registerField"; field: keyof AuthDraft; value: string }
   | { type: "auth/login" }
@@ -114,8 +117,6 @@ type Action =
   | { type: "manual/setMeta"; field: "date" | "examType" | "panel"; value: string }
   | { type: "manual/setValue"; code: string; value: string }
   | { type: "manual/submit" };
-
-const STORAGE_KEY = "vitalis-core-state-v1";
 
 function createResult(
   id: string,
@@ -274,6 +275,8 @@ function createInitialState(): HealthAppState {
 
 function reducer(state: HealthAppState, action: Action): HealthAppState {
   switch (action.type) {
+    case "hydrate":
+      return action.state;
     case "auth/loginField":
       return {
         ...state,
@@ -652,6 +655,11 @@ function deriveStoreData(state: HealthAppState) {
 type HealthStoreValue = {
   state: HealthAppState;
   derived: ReturnType<typeof deriveStoreData>;
+  sync: {
+    hydrated: boolean;
+    mode: "local" | "remote";
+    error: string | null;
+  };
   actions: {
     setLoginField: (field: keyof AuthDraft, value: string) => void;
     setRegisterField: (field: keyof AuthDraft, value: string) => void;
@@ -673,23 +681,52 @@ type HealthStoreValue = {
 const HealthStoreContext = createContext<HealthStoreValue | null>(null);
 
 export function HealthStoreProvider({ children }: PropsWithChildren) {
-  const [state, dispatch] = useReducer(reducer, undefined, () => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-
-    if (!stored) {
-      return createInitialState();
-    }
-
-    try {
-      return JSON.parse(stored) as HealthAppState;
-    } catch {
-      return createInitialState();
-    }
-  });
+  const api = useMemo(() => createHealthApi(), []);
+  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+  const [hydrated, setHydrated] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const mode: "local" | "remote" = import.meta.env.VITE_API_BASE_URL ? "remote" : "local";
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    let cancelled = false;
+
+    api
+      .loadState()
+      .then((loadedState) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (loadedState) {
+          dispatch({ type: "hydrate", state: loadedState });
+        }
+
+        setHydrated(true);
+        setSyncError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+
+        setHydrated(true);
+        setSyncError(error instanceof Error ? error.message : "Failed to load state");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    api.saveState(state).catch((error: unknown) => {
+      setSyncError(error instanceof Error ? error.message : "Failed to save state");
+    });
+  }, [api, hydrated, state]);
 
   const value = useMemo<HealthStoreValue>(() => {
     const derived = deriveStoreData(state);
@@ -697,6 +734,11 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
     return {
       state,
       derived,
+      sync: {
+        hydrated,
+        mode,
+        error: syncError,
+      },
       actions: {
         setLoginField: (field, value) => dispatch({ type: "auth/loginField", field, value }),
         setRegisterField: (field, value) => dispatch({ type: "auth/registerField", field, value }),
@@ -714,7 +756,7 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
         submitManualEntry: () => dispatch({ type: "manual/submit" }),
       },
     };
-  }, [state]);
+  }, [hydrated, mode, state, syncError]);
 
   return <HealthStoreContext.Provider value={value}>{children}</HealthStoreContext.Provider>;
 }

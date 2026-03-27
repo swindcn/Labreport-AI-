@@ -43,7 +43,7 @@ const inAppTabs = [
 ];
 
 function ScreensIndexPage() {
-  const { state, derived } = useHealthStore();
+  const { state, derived, sync } = useHealthStore();
   const routes = screenRoutes.filter((route) => route.path !== "/screens");
 
   return (
@@ -57,7 +57,11 @@ function ScreensIndexPage() {
         <div className="grid gap-3 sm:grid-cols-3">
           <MetricCard label="当前档案" value={derived.currentProfile.name} detail={derived.currentProfile.memberId} />
           <MetricCard label="报告数量" value={`${state.reports.length}`} detail="全局 store 实时驱动" />
-          <MetricCard label="路由方式" value="Hash Router" detail="无额外依赖，当前环境可直接工作" />
+          <MetricCard
+            label="API 模式"
+            value={sync.mode === "remote" ? "Remote API" : "Local Adapter"}
+            detail={sync.error ?? "状态已接入 API 抽象层"}
+          />
         </div>
       </SectionCard>
 
@@ -88,7 +92,7 @@ function ScreensIndexPage() {
 }
 
 function HomePage() {
-  const { actions } = useHealthStore();
+  const { actions, sync } = useHealthStore();
 
   return (
     <PhoneFrame header={<TopBar left="≡" title="Health Analysis" right={<AvatarBadge label="DR" />} />}>
@@ -137,6 +141,11 @@ function HomePage() {
       <RouteButton to="/scanning" onClick={actions.startScan}>
         Start Analysis
       </RouteButton>
+      {!sync.hydrated ? (
+        <p className="text-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+          Syncing state...
+        </p>
+      ) : null}
       <RouteLink to="/screens" className="text-center text-[11px] uppercase tracking-[0.18em] text-slate-400">
         HIPAA-compliant clinical data processing.
       </RouteLink>
