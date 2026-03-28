@@ -16,10 +16,26 @@ export type FamilyProfileItem = {
 };
 
 export type RecentRecordItem = {
+  id: string;
   title: string;
   date: string;
   location: string;
   tag: string;
+  status: string;
+  tone: Tone;
+};
+
+export type ReportArchiveItem = {
+  id: string;
+  rawDate: string;
+  title: string;
+  date: string;
+  location: string;
+  examType: string;
+  sourceType: string;
+  status: string;
+  aiAccuracy: string;
+  savedAt?: string;
   tone: Tone;
 };
 
@@ -77,14 +93,19 @@ export function FamilyProfilesStrip({
   actionLabel,
   activeId,
   onSelect,
+  onAction,
 }: {
   profiles: FamilyProfileItem[];
   compact?: boolean;
   actionLabel?: string;
   activeId?: string;
   onSelect?: (profileId: string) => void;
+  onAction?: () => void;
 }) {
-  const visibleProfiles = compact ? profiles.slice(0, 3) : profiles;
+  const avatarSizeClassName = compact ? "h-12 w-12" : "h-14 w-14";
+  const labelClassName = compact
+    ? "max-w-[3.5rem] truncate whitespace-nowrap text-center text-xs text-slate-500"
+    : "max-w-[4.75rem] truncate whitespace-nowrap text-center text-sm text-slate-500";
 
   return (
     <section>
@@ -93,21 +114,33 @@ export function FamilyProfilesStrip({
           Family Profiles
         </h3>
         {actionLabel ? (
-          <button className="text-sm font-semibold text-[#1E40AF]">{actionLabel}</button>
+          <button type="button" onClick={onAction} className="text-sm font-semibold text-[#1E40AF]">
+            {actionLabel}
+          </button>
         ) : (
           <Chip label="ME" tone="accent" />
         )}
       </div>
-      <div className={`mt-3 flex items-center ${compact ? "gap-3" : "gap-4 overflow-hidden"} px-1`}>
-        {visibleProfiles.map((profile, index) => (
+      <div
+        className={`mt-3 flex items-start gap-3 overflow-x-auto px-1 pb-1 ${
+          compact ? "pr-1" : "pr-5"
+        } [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+      >
+        {profiles.map((profile, index) => (
           <button
             key={profile.id ?? profile.name}
             type="button"
-            className="flex flex-col items-center gap-2"
-            onClick={profile.id && onSelect ? () => onSelect(profile.id!) : undefined}
+            className="flex shrink-0 flex-col items-center gap-2"
+            onClick={
+              profile.dashed && onAction
+                ? onAction
+                : profile.id && onSelect
+                  ? () => onSelect(profile.id!)
+                  : undefined
+            }
           >
             <div
-              className={`flex ${compact ? "h-12 w-12" : "h-14 w-14"} items-center justify-center rounded-full text-sm font-semibold ${
+              className={`flex ${avatarSizeClassName} items-center justify-center rounded-full text-sm font-semibold ${
                 profile.dashed
                   ? "border border-dashed border-[#c9d2e8] bg-[#f9fbff] text-[#8e97ab]"
                   : profile.accent || profile.id === activeId || (compact && index === 0)
@@ -117,7 +150,7 @@ export function FamilyProfilesStrip({
             >
               {profile.initials}
             </div>
-            <span className={compact ? "text-xs text-slate-500" : "text-sm text-slate-500"}>
+            <span className={labelClassName} title={profile.name}>
               {profile.name}
             </span>
           </button>
@@ -130,9 +163,11 @@ export function FamilyProfilesStrip({
 export function RecentRecordsSection({
   records,
   viewAllTo,
+  onSelectRecord,
 }: {
   records: RecentRecordItem[];
   viewAllTo: string;
+  onSelectRecord?: (reportId: string) => void;
 }) {
   return (
     <section>
@@ -144,23 +179,80 @@ export function RecentRecordsSection({
       </div>
       <div className="mt-3 space-y-3">
         {records.map((record) => (
-          <Card key={record.title}>
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <CircleIcon label={record.title.slice(0, 2).toUpperCase()} tone="accent" />
-                <div>
-                  <p className="font-semibold text-slate-900">{record.title}</p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {record.date} • {record.location}
-                  </p>
+          <RouteLink
+            key={record.id}
+            to={record.status === "READY" ? "/report-analysis" : "/scanning"}
+            className="block"
+            onClick={onSelectRecord ? () => onSelectRecord(record.id) : undefined}
+          >
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <CircleIcon label={record.title.slice(0, 2).toUpperCase()} tone="accent" />
+                  <div>
+                    <p className="font-semibold text-slate-900">{record.title}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {record.date} • {record.location}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Chip label={record.tag} tone={record.tone} />
+                  <span className="text-slate-400">›</span>
                 </div>
               </div>
-              <Chip label={record.tag} tone={record.tone} />
-            </div>
-          </Card>
+            </Card>
+          </RouteLink>
         ))}
       </div>
     </section>
+  );
+}
+
+export function ReportArchiveList({
+  reports,
+  onSelectReport,
+}: {
+  reports: ReportArchiveItem[];
+  onSelectReport?: (reportId: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {reports.map((report) => (
+        <RouteLink
+          key={report.id}
+          to={report.status === "READY" ? "/report-analysis" : "/scanning"}
+          className="block"
+          onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
+        >
+          <Card>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{report.title}</p>
+                  <p className="mt-1 truncate text-sm text-slate-500">
+                    {report.date} • {report.location}
+                  </p>
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    {report.examType} • {report.sourceType}
+                  </p>
+                  {report.savedAt ? (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
+                      Saved {report.savedAt}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <Chip label={report.status} tone={report.tone} />
+                <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+              </div>
+            </div>
+          </Card>
+        </RouteLink>
+      ))}
+    </div>
   );
 }
 
@@ -293,7 +385,7 @@ export function ManualBiomarkerFields({
   values,
   onChange,
 }: {
-  items: ManualBiomarkerItem[];
+  items: readonly ManualBiomarkerItem[];
   values?: Record<string, string>;
   onChange?: (code: string, value: string) => void;
 }) {

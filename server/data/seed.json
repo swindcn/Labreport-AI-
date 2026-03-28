@@ -1,0 +1,246 @@
+{
+  "users": [
+    {
+      "id": "user_me",
+      "email": "jane.smith@medical.com",
+      "password": "password123",
+      "name": "Jane Smith"
+    }
+  ],
+  "sessions": {},
+  "profiles": [
+    {
+      "id": "profile_me",
+      "userId": "user_me",
+      "name": "John Doe",
+      "relation": "Me",
+      "initials": "ME",
+      "memberId": "882-0192-H",
+      "birthDate": "1990-04-18",
+      "gender": "Male",
+      "note": "Monitoring liver function and routine metabolic markers."
+    },
+    {
+      "id": "profile_dad",
+      "userId": "user_me",
+      "name": "Dad",
+      "relation": "Father",
+      "initials": "DA",
+      "memberId": "772-2120-A",
+      "birthDate": "1962-08-11",
+      "gender": "Male",
+      "note": "Kidney function and blood pressure follow-up."
+    },
+    {
+      "id": "profile_mom",
+      "userId": "user_me",
+      "name": "Mom",
+      "relation": "Mother",
+      "initials": "MO",
+      "memberId": "662-1198-C",
+      "birthDate": "1965-01-26",
+      "gender": "Female",
+      "note": "Routine preventive screening record."
+    }
+  ],
+  "reports": [
+    {
+      "id": "report_1",
+      "profileId": "profile_me",
+      "title": "Full Blood Count",
+      "date": "2026-03-27T09:30:00.000Z",
+      "location": "St. Mary's Lab",
+      "sceneType": "DAILY",
+      "sourceType": "pdf",
+      "status": "ready",
+      "examType": "Routine",
+      "aiAccuracy": 99.2,
+      "results": [
+        {
+          "id": "r1_alt",
+          "code": "ALT",
+          "name": "ALT (Alanine Aminotransferase)",
+          "category": "Liver Function",
+          "value": 45,
+          "unit": "U/L",
+          "referenceText": "Ref < 40 U/L",
+          "status": "high"
+        },
+        {
+          "id": "r1_ast",
+          "code": "AST",
+          "name": "AST (Aspartate Aminotransferase)",
+          "category": "Liver Function",
+          "value": 32,
+          "unit": "U/L",
+          "referenceText": "Ref 10 - 35 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r1_alp",
+          "code": "ALP",
+          "name": "ALP (Alkaline Phosphatase)",
+          "category": "Liver Function",
+          "value": 88,
+          "unit": "U/L",
+          "referenceText": "Ref 44 - 147 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r1_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 1.1,
+          "unit": "mg/dL",
+          "referenceText": "Ref 0.7 - 1.3 mg/dL",
+          "status": "normal"
+        },
+        {
+          "id": "r1_bun",
+          "code": "BUN",
+          "name": "BUN (Blood Urea Nitrogen)",
+          "category": "Kidney Function",
+          "value": 6,
+          "unit": "mg/dL",
+          "referenceText": "Ref 7 - 20 mg/dL",
+          "status": "low"
+        }
+      ]
+    },
+    {
+      "id": "report_2",
+      "profileId": "profile_me",
+      "title": "Liver Function Test",
+      "date": "2026-03-21T09:30:00.000Z",
+      "location": "Central Clinic",
+      "sceneType": "INPATIENT",
+      "sourceType": "image",
+      "status": "ready",
+      "examType": "Clinical",
+      "aiAccuracy": 98.7,
+      "results": [
+        {
+          "id": "r2_alt",
+          "code": "ALT",
+          "name": "ALT",
+          "category": "Liver Function",
+          "value": 16,
+          "unit": "U/L",
+          "referenceText": "Ref 7 - 55 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r2_ast",
+          "code": "AST",
+          "name": "AST",
+          "category": "Liver Function",
+          "value": 19,
+          "unit": "U/L",
+          "referenceText": "Ref 8 - 48 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r2_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 0.95,
+          "unit": "mg/dL",
+          "referenceText": "Ref 0.7 - 1.3 mg/dL",
+          "status": "normal"
+        },
+        {
+          "id": "r2_bun",
+          "code": "BUN",
+          "name": "BUN",
+          "category": "Kidney Function",
+          "value": 7,
+          "unit": "mg/dL",
+          "referenceText": "Ref 7 - 20 mg/dL",
+          "status": "normal"
+        },
+        {
+          "id": "r2_hba1c",
+          "code": "HBA1C",
+          "name": "HbA1c",
+          "category": "Metabolic",
+          "value": 5.2,
+          "unit": "%",
+          "referenceText": "Ref 4.0 - 5.6%",
+          "status": "normal"
+        }
+      ]
+    },
+    {
+      "id": "report_3",
+      "profileId": "profile_me",
+      "title": "Cardiology Screening",
+      "date": "2026-03-15T09:30:00.000Z",
+      "location": "Dr. Aris",
+      "sceneType": "DAILY",
+      "sourceType": "pdf",
+      "status": "ready",
+      "examType": "Routine",
+      "aiAccuracy": 97.4,
+      "results": [
+        {
+          "id": "r3_alt",
+          "code": "ALT",
+          "name": "ALT",
+          "category": "Liver Function",
+          "value": 18,
+          "unit": "U/L",
+          "referenceText": "Ref 7 - 55 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r3_ast",
+          "code": "AST",
+          "name": "AST",
+          "category": "Liver Function",
+          "value": 22,
+          "unit": "U/L",
+          "referenceText": "Ref 8 - 48 U/L",
+          "status": "normal"
+        },
+        {
+          "id": "r3_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 0.9,
+          "unit": "mg/dL",
+          "referenceText": "Ref 0.7 - 1.3 mg/dL",
+          "status": "normal"
+        },
+        {
+          "id": "r3_bun",
+          "code": "BUN",
+          "name": "BUN",
+          "category": "Kidney Function",
+          "value": 8,
+          "unit": "mg/dL",
+          "referenceText": "Ref 7 - 20 mg/dL",
+          "status": "normal"
+        },
+        {
+          "id": "r3_hba1c",
+          "code": "HBA1C",
+          "name": "HbA1c",
+          "category": "Metabolic",
+          "value": 5.4,
+          "unit": "%",
+          "referenceText": "Ref 4.0 - 5.6%",
+          "status": "normal"
+        }
+      ]
+    }
+  ],
+  "preferencesByUserId": {
+    "user_me": {
+      "activeProfileId": "profile_me",
+      "selectedReportId": "report_1"
+    }
+  }
+}

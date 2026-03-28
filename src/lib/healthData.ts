@@ -130,6 +130,49 @@ export const manualBiomarkers = [
   { code: "GGT", name: "Gamma Glutamyl Transferase", unit: "U/L" },
 ];
 
+export const manualBiomarkerPanels = {
+  "Liver Function Panel": [
+    { code: "ALT", name: "Alanine Aminotransferase", unit: "U/L" },
+    { code: "AST", name: "Aspartate Aminotransferase", unit: "U/L" },
+    { code: "TBIL", name: "Total Bilirubin", unit: "mg/dL" },
+    { code: "ALP", name: "Alkaline Phosphatase", unit: "U/L" },
+    { code: "GGT", name: "Gamma Glutamyl Transferase", unit: "U/L" },
+  ],
+  "Kidney Function Panel": [
+    { code: "CRE", name: "Creatinine", unit: "mg/dL" },
+    { code: "BUN", name: "Blood Urea Nitrogen", unit: "mg/dL" },
+    { code: "UA", name: "Uric Acid", unit: "mg/dL" },
+    { code: "EGFR", name: "Estimated GFR", unit: "mL/min/1.73m2" },
+  ],
+  "Metabolic Panel": [
+    { code: "GLU", name: "Glucose", unit: "mg/dL" },
+    { code: "HBA1C", name: "HbA1c", unit: "%" },
+    { code: "CHOL", name: "Total Cholesterol", unit: "mg/dL" },
+    { code: "TRIG", name: "Triglycerides", unit: "mg/dL" },
+  ],
+} as const;
+
+export const manualPanelOptions = Object.keys(manualBiomarkerPanels);
+
+export function getManualBiomarkersForPanel(panel: string) {
+  return manualBiomarkerPanels[panel as keyof typeof manualBiomarkerPanels] ?? manualBiomarkerPanels["Liver Function Panel"];
+}
+
+export function createManualPanelValues(panel: string) {
+  return Object.fromEntries(getManualBiomarkersForPanel(panel).map((item) => [item.code as string, ""]));
+}
+
+export const profileRelationOptions = [
+  "Me",
+  "Father",
+  "Mother",
+  "Sibling",
+  "Child",
+  "Partner",
+  "Guardian",
+  "Relative",
+];
+
 export const profileMenu = [
   { group: "ACCOUNT & CARE", items: ["Profile Management", "Tracked Metrics", "Course Management"] },
   { group: "PRIVACY & SUPPORT", items: ["Privacy & Data", "Help & Feedback", "Settings"] },

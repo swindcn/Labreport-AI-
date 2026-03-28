@@ -13,110 +13,56 @@ import type {
   HealthCategoryItem,
   MonthlyTrendItem,
   RecentRecordItem,
+  ReportArchiveItem,
   ReportBiomarkerGroupItem,
 } from "@/components/health/sections";
 import { createHealthApi } from "@/lib/api/healthApi";
-
-type ExamType = "Routine" | "Clinical";
-type SceneType = "DAILY" | "INPATIENT" | "ROUTINE";
-type SourceType = "image" | "pdf" | "manual";
-type ReportStatus = "processing" | "ready";
-type BiomarkerStatus = "normal" | "high" | "low";
-
-export type Profile = {
-  id: string;
-  userId: string;
-  name: string;
-  relation: string;
-  initials: string;
-  memberId: string;
-  birthDate: string;
-  gender: string;
-  note: string;
-};
-
-export type BiomarkerResult = {
-  id: string;
-  code: string;
-  name: string;
-  category: string;
-  value: number;
-  unit: string;
-  referenceText: string;
-  status: BiomarkerStatus;
-};
-
-export type Report = {
-  id: string;
-  profileId: string;
-  title: string;
-  date: string;
-  location: string;
-  sceneType: SceneType;
-  sourceType: SourceType;
-  status: ReportStatus;
-  examType: ExamType;
-  aiAccuracy: number;
-  results: BiomarkerResult[];
-};
-
-type AuthDraft = {
-  email: string;
-  password: string;
-  code: string;
-};
-
-type ProfileDraft = {
-  fullName: string;
-  birthDate: string;
-  gender: string;
-  note: string;
-};
-
-type ScanSession = {
-  progress: number;
-  status: "idle" | "processing" | "ready";
-  examType: ExamType;
-};
-
-type ManualEntryDraft = {
-  date: string;
-  examType: ExamType;
-  panel: string;
-  values: Record<string, string>;
-};
-
-export type HealthAppState = {
-  auth: {
-    currentUserId: string | null;
-    loginDraft: AuthDraft;
-    registerDraft: AuthDraft;
-  };
-  profiles: Profile[];
-  activeProfileId: string;
-  profileDraft: ProfileDraft;
-  reports: Report[];
-  selectedReportId: string | null;
-  scanSession: ScanSession;
-  manualEntryDraft: ManualEntryDraft;
-};
+import { createManualPanelValues, getManualBiomarkersForPanel, profileRelationOptions } from "@/lib/healthData";
+import type {
+  AuthDraft,
+  BiomarkerResult,
+  BiomarkerStatus,
+  CreateProfileInput,
+  CreateManualReportInput,
+  CreateUploadedReportInput,
+  DeleteProfileResult,
+  ExamType,
+  HealthAppState,
+  HealthClientState,
+  HealthPreferences,
+  HealthSession,
+  Profile,
+  ProfileDraft,
+  ProfileDraftState,
+  Report,
+  SceneType,
+} from "@/lib/healthDomain";
 
 type Action =
   | { type: "hydrate"; state: HealthAppState }
   | { type: "auth/loginField"; field: keyof AuthDraft; value: string }
   | { type: "auth/registerField"; field: keyof AuthDraft; value: string }
-  | { type: "auth/login" }
-  | { type: "auth/register" }
-  | { type: "auth/logout" }
+  | { type: "auth/loginSuccess"; currentUserId: string | null }
+  | { type: "auth/registerSuccess"; currentUserId: string | null; email: string; password: string }
+  | { type: "auth/logoutSuccess" }
   | { type: "profiles/select"; profileId: string }
+  | { type: "profiles/createSuccess"; profile: Profile }
+  | { type: "profiles/deleteSuccess"; payload: DeleteProfileResult }
+  | { type: "profileDraft/startCreate" }
   | { type: "profileDraft/set"; field: keyof ProfileDraft; value: string }
-  | { type: "profileDraft/save" }
+  | { type: "profileDraft/saveSuccess"; profile: Profile }
+  | { type: "scan/setExamType"; examType: ExamType }
+  | { type: "scan/setProgress"; progress: number }
   | { type: "scan/start" }
-  | { type: "scan/complete" }
+  | { type: "reports/createUploadedSuccess"; report: Report }
+  | { type: "scan/completeSuccess"; report: Report }
+  | { type: "scan/retrySuccess"; report: Report }
+  | { type: "reports/save"; reportId: string; savedAt: string }
   | { type: "reports/select"; reportId: string }
+  | { type: "reports/resultsLoaded"; reportId: string; results: BiomarkerResult[] }
   | { type: "manual/setMeta"; field: "date" | "examType" | "panel"; value: string }
   | { type: "manual/setValue"; code: string; value: string }
-  | { type: "manual/submit" };
+  | { type: "manual/submitSuccess"; report: Report };
 
 function createResult(
   id: string,
@@ -129,6 +75,28 @@ function createResult(
   status: BiomarkerStatus,
 ): BiomarkerResult {
   return { id, code, name, category, value, unit, referenceText, status };
+}
+
+function createEmptyProfileDraft(relation = "Relative"): ProfileDraft {
+  return {
+    fullName: "",
+    relation,
+    birthDate: "",
+    gender: "",
+    note: "",
+    avatarUrl: "",
+  };
+}
+
+function createProfileDraftFromProfile(profile: Profile): ProfileDraft {
+  return {
+    fullName: profile.name,
+    relation: profile.relation,
+    birthDate: profile.birthDate,
+    gender: profile.gender,
+    note: profile.note,
+    avatarUrl: profile.avatarUrl ?? "",
+  };
 }
 
 function createInitialState(): HealthAppState {
@@ -162,6 +130,7 @@ function createInitialState(): HealthAppState {
         birthDate: "1990-04-18",
         gender: "Male",
         note: "Monitoring liver function and routine metabolic markers.",
+        avatarUrl: "",
       },
       {
         id: profileDad,
@@ -173,6 +142,7 @@ function createInitialState(): HealthAppState {
         birthDate: "1962-08-11",
         gender: "Male",
         note: "Kidney function and blood pressure follow-up.",
+        avatarUrl: "",
       },
       {
         id: profileMom,
@@ -184,15 +154,23 @@ function createInitialState(): HealthAppState {
         birthDate: "1965-01-26",
         gender: "Female",
         note: "Routine preventive screening record.",
+        avatarUrl: "",
       },
     ],
     activeProfileId: profileMe,
     profileDraft: {
       fullName: "Jhonathan Doe",
+      relation: "Me",
       birthDate: "1990-04-18",
       gender: "Male",
       note: "Note any chronic conditions, recurring symptoms, or recent medical observations...",
+      avatarUrl: "",
     },
+    profileDraftState: {
+      mode: "edit",
+      targetProfileId: profileMe,
+    },
+    reportSavedAt: {},
     reports: [
       {
         id: "report_1",
@@ -263,13 +241,106 @@ function createInitialState(): HealthAppState {
       examType: "Routine",
       panel: "Liver Function Panel",
       values: {
+        ...createManualPanelValues("Liver Function Panel"),
         ALT: "45",
         AST: "32",
-        TBIL: "",
         ALP: "88",
-        GGT: "",
       },
     },
+  };
+}
+
+function pickPreferences(state: HealthAppState): HealthPreferences {
+  return {
+    activeProfileId: state.activeProfileId,
+    selectedReportId: state.selectedReportId,
+  };
+}
+
+function pickClientState(state: HealthAppState): HealthClientState {
+  return {
+    profileDraft: state.profileDraft,
+    profileDraftState: state.profileDraftState,
+    profileAvatarUrls: Object.fromEntries(
+      state.profiles
+        .filter((profile) => Boolean(profile.avatarUrl))
+        .map((profile) => [profile.id, profile.avatarUrl ?? ""]),
+    ),
+    reportSavedAt: state.reportSavedAt,
+    scanSession: state.scanSession,
+    manualEntryDraft: state.manualEntryDraft,
+  };
+}
+
+function mergeHydratedState(
+  initialState: HealthAppState,
+  resources: {
+    session: HealthSession | null;
+    profiles: Profile[] | null;
+    reports: Report[] | null;
+    preferences: HealthPreferences | null;
+    clientState: HealthClientState | null;
+  },
+): HealthAppState {
+  const avatarUrlCache = resources.clientState?.profileAvatarUrls ?? {};
+  const profiles = (resources.profiles ?? initialState.profiles).map((profile) => ({
+    ...profile,
+    avatarUrl: profile.avatarUrl || avatarUrlCache[profile.id] || "",
+  }));
+  const activeProfileId =
+    resources.preferences?.activeProfileId && profiles.some((profile) => profile.id === resources.preferences?.activeProfileId)
+      ? resources.preferences.activeProfileId
+      : profiles[0]?.id ?? "";
+  const reports = resources.reports ?? initialState.reports;
+  const selectedReportId =
+    resources.preferences?.selectedReportId &&
+    reports.some((report) => report.id === resources.preferences?.selectedReportId && report.profileId === activeProfileId)
+      ? resources.preferences.selectedReportId
+      : getLatestReportId(reports, activeProfileId);
+  const currentProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0];
+  const fallbackClientState = pickClientState(initialState);
+  const requestedProfileDraftState = resources.clientState?.profileDraftState;
+  const profileDraftState: ProfileDraftState =
+    requestedProfileDraftState?.mode === "edit" &&
+    requestedProfileDraftState.targetProfileId &&
+    profiles.some((profile) => profile.id === requestedProfileDraftState.targetProfileId)
+      ? requestedProfileDraftState
+      : currentProfile
+        ? {
+            mode: "edit",
+            targetProfileId: currentProfile.id,
+          }
+        : {
+            mode: "create",
+            targetProfileId: null,
+          };
+  const draftProfile =
+    profileDraftState.mode === "edit" && profileDraftState.targetProfileId
+      ? profiles.find((profile) => profile.id === profileDraftState.targetProfileId) ?? currentProfile
+      : null;
+
+  return {
+    ...initialState,
+    auth: {
+      ...initialState.auth,
+      currentUserId: resources.session ? resources.session.currentUserId : initialState.auth.currentUserId,
+    },
+    profiles,
+    reports,
+    activeProfileId,
+    selectedReportId,
+    profileDraftState,
+    profileDraft:
+      requestedProfileDraftState?.mode === "create"
+        ? resources.clientState?.profileDraft ?? createEmptyProfileDraft()
+        : draftProfile
+          ? createProfileDraftFromProfile(draftProfile)
+          : currentProfile
+        ? createProfileDraftFromProfile(currentProfile)
+        : createEmptyProfileDraft(),
+    reportSavedAt: resources.clientState?.reportSavedAt ?? fallbackClientState.reportSavedAt,
+    scanSession: resources.clientState?.scanSession ?? fallbackClientState.scanSession,
+    manualEntryDraft: resources.clientState?.manualEntryDraft ?? fallbackClientState.manualEntryDraft,
   };
 }
 
@@ -299,44 +370,28 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
           },
         },
       };
-    case "auth/login": {
-      const existingUser = state.auth.loginDraft.email
-        ? state.auth.loginDraft.email
-        : state.auth.registerDraft.email;
-
-      const user = state.auth.currentUserId
-        ? state.auth.currentUserId
-        : state.profiles[0]?.userId ?? null;
-
-      if (!user || !existingUser) {
-        return state;
-      }
-
+    case "auth/loginSuccess":
       return {
         ...state,
         auth: {
           ...state.auth,
-          currentUserId: user,
+          currentUserId: action.currentUserId,
         },
       };
-    }
-    case "auth/register": {
-      const userId = `user_${state.auth.registerDraft.email || "new"}`;
-
+    case "auth/registerSuccess":
       return {
         ...state,
         auth: {
           ...state.auth,
-          currentUserId: userId,
+          currentUserId: action.currentUserId,
           loginDraft: {
             ...state.auth.loginDraft,
-            email: state.auth.registerDraft.email,
-            password: state.auth.registerDraft.password,
+            email: action.email,
+            password: action.password,
           },
         },
       };
-    }
-    case "auth/logout":
+    case "auth/logoutSuccess":
       return {
         ...state,
         auth: {
@@ -354,12 +409,59 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
       return {
         ...state,
         activeProfileId: profile.id,
-        profileDraft: {
-          fullName: profile.name,
-          birthDate: profile.birthDate,
-          gender: profile.gender,
-          note: profile.note,
+        selectedReportId: getLatestReportId(state.reports, profile.id),
+        profileDraftState: {
+          mode: "edit",
+          targetProfileId: profile.id,
         },
+        profileDraft: createProfileDraftFromProfile(profile),
+      };
+    }
+    case "profiles/createSuccess":
+      return {
+        ...state,
+        profiles: [...state.profiles, action.profile],
+        activeProfileId: action.profile.id,
+        selectedReportId: getLatestReportId(state.reports, action.profile.id),
+        profileDraftState: {
+          mode: "edit",
+          targetProfileId: action.profile.id,
+        },
+        profileDraft: createProfileDraftFromProfile(action.profile),
+      };
+    case "profiles/deleteSuccess": {
+      const profiles = state.profiles.filter((profile) => profile.id !== action.payload.deletedProfileId);
+      const nextProfile =
+        profiles.find((profile) => profile.id === action.payload.activeProfileId) ?? profiles[0] ?? null;
+
+      return {
+        ...state,
+        profiles,
+        reports: state.reports.filter((report) => report.profileId !== action.payload.deletedProfileId),
+        activeProfileId: action.payload.activeProfileId,
+        selectedReportId: action.payload.selectedReportId,
+        profileDraftState: nextProfile
+          ? {
+              mode: "edit",
+              targetProfileId: nextProfile.id,
+            }
+          : {
+              mode: "create",
+              targetProfileId: null,
+            },
+        profileDraft: nextProfile ? createProfileDraftFromProfile(nextProfile) : createEmptyProfileDraft(),
+      };
+    }
+    case "profileDraft/startCreate": {
+      const relation = profileRelationOptions.find((option) => option !== "Me") ?? "Relative";
+
+      return {
+        ...state,
+        profileDraftState: {
+          mode: "create",
+          targetProfileId: null,
+        },
+        profileDraft: createEmptyProfileDraft(relation),
       };
     }
     case "profileDraft/set":
@@ -370,21 +472,34 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
           [action.field]: action.value,
         },
       };
-    case "profileDraft/save":
+    case "profileDraft/saveSuccess":
       return {
         ...state,
         profiles: state.profiles.map((profile) =>
-          profile.id === state.activeProfileId
-            ? {
-                ...profile,
-                name: state.profileDraft.fullName || profile.name,
-                birthDate: state.profileDraft.birthDate,
-                gender: state.profileDraft.gender,
-                note: state.profileDraft.note,
-                initials: createInitials(state.profileDraft.fullName || profile.name),
-              }
-            : profile,
+          profile.id === action.profile.id ? action.profile : profile,
         ),
+        profileDraftState: {
+          mode: "edit",
+          targetProfileId: action.profile.id,
+        },
+        profileDraft: createProfileDraftFromProfile(action.profile),
+      };
+    case "scan/setExamType":
+      return {
+        ...state,
+        scanSession: {
+          ...state.scanSession,
+          examType: action.examType,
+        },
+      };
+    case "scan/setProgress":
+      return {
+        ...state,
+        scanSession: {
+          ...state.scanSession,
+          status: action.progress >= 100 ? "ready" : "processing",
+          progress: Math.max(0, Math.min(100, Math.round(action.progress))),
+        },
       };
     case "scan/start":
       return {
@@ -392,23 +507,66 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
         scanSession: {
           ...state.scanSession,
           status: "processing",
-          progress: 65,
+          progress: 12,
         },
       };
-    case "scan/complete":
+    case "reports/createUploadedSuccess":
       return {
         ...state,
+        reports: [action.report, ...state.reports.filter((report) => report.id !== action.report.id)],
+        selectedReportId: action.report.id,
         scanSession: {
           ...state.scanSession,
-          status: "ready",
-          progress: 100,
+          status: "processing",
+          progress: 12,
         },
-        selectedReportId: getLatestReportId(state.reports, state.activeProfileId),
+      };
+    case "scan/completeSuccess":
+      return {
+        ...state,
+        reports: state.reports.map((report) => (report.id === action.report.id ? action.report : report)),
+        scanSession: {
+          ...state.scanSession,
+          status: action.report.status === "failed" ? "failed" : "ready",
+          progress: action.report.status === "failed" ? Math.max(state.scanSession.progress, 92) : 100,
+        },
+        selectedReportId: action.report.id,
+      };
+    case "scan/retrySuccess":
+      return {
+        ...state,
+        reports: state.reports.map((report) => (report.id === action.report.id ? action.report : report)),
+        selectedReportId: action.report.id,
+        scanSession: {
+          ...state.scanSession,
+          status: "processing",
+          progress: 12,
+        },
+      };
+    case "reports/save":
+      return {
+        ...state,
+        reportSavedAt: {
+          ...state.reportSavedAt,
+          [action.reportId]: action.savedAt,
+        },
       };
     case "reports/select":
       return {
         ...state,
         selectedReportId: action.reportId,
+      };
+    case "reports/resultsLoaded":
+      return {
+        ...state,
+        reports: state.reports.map((report) =>
+          report.id === action.reportId
+            ? {
+                ...report,
+                results: action.results,
+              }
+            : report,
+        ),
       };
     case "manual/setMeta":
       if (action.field === "examType") {
@@ -417,6 +575,17 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
           manualEntryDraft: {
             ...state.manualEntryDraft,
             examType: action.value as ExamType,
+          },
+        };
+      }
+
+      if (action.field === "panel") {
+        return {
+          ...state,
+          manualEntryDraft: {
+            ...state.manualEntryDraft,
+            panel: action.value,
+            values: createManualPanelValues(action.value),
           },
         };
       }
@@ -439,45 +608,12 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
           },
         },
       };
-    case "manual/submit": {
-      const createdResults = Object.entries(state.manualEntryDraft.values)
-        .filter(([, value]) => value.trim() !== "")
-        .map(([code, rawValue], index) => {
-          const numericValue = Number(rawValue);
-
-          return createResult(
-            `manual_${code}_${index}`,
-            code,
-            code,
-            code === "TBIL" || code === "GGT" ? "Liver Function" : "Liver Function",
-            numericValue,
-            code === "TBIL" ? "mg/dL" : "U/L",
-            code === "TBIL" ? "Ref 0.1 - 1.2 mg/dL" : "Ref 7 - 55 U/L",
-            numericValue > 40 ? "high" : "normal",
-          );
-        });
-
-      const reportId = `report_manual_${Date.now()}`;
-      const newReport: Report = {
-        id: reportId,
-        profileId: state.activeProfileId,
-        title: state.manualEntryDraft.panel,
-        date: new Date(state.manualEntryDraft.date).toISOString(),
-        location: "Manual Entry",
-        sceneType: state.manualEntryDraft.examType === "Clinical" ? "INPATIENT" : "ROUTINE",
-        sourceType: "manual",
-        status: "ready",
-        examType: state.manualEntryDraft.examType,
-        aiAccuracy: 100,
-        results: createdResults,
-      };
-
+    case "manual/submitSuccess":
       return {
         ...state,
-        reports: [newReport, ...state.reports],
-        selectedReportId: reportId,
+        reports: [action.report, ...state.reports.filter((report) => report.id !== action.report.id)],
+        selectedReportId: action.report.id,
       };
-    }
     default:
       return state;
   }
@@ -496,6 +632,114 @@ function createInitials(name: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
+}
+
+function createProfileUpdate(state: HealthAppState) {
+  const profileId = state.profileDraftState.targetProfileId;
+  const profile = profileId ? state.profiles.find((item) => item.id === profileId) : null;
+
+  if (!profile) {
+    return null;
+  }
+
+  const name = state.profileDraft.fullName || profile.name;
+
+  return {
+    profileId: profile.id,
+    patch: {
+      name,
+      relation: state.profileDraft.relation,
+      birthDate: state.profileDraft.birthDate,
+      gender: state.profileDraft.gender,
+      note: state.profileDraft.note,
+      avatarUrl: state.profileDraft.avatarUrl || "",
+      initials: createInitials(name),
+    },
+  };
+}
+
+function createProfileFromDraft(state: HealthAppState): CreateProfileInput {
+  const relation =
+    state.profileDraft.relation && state.profileDraft.relation.trim() !== ""
+      ? state.profileDraft.relation
+      : "Relative";
+
+  return {
+    name: state.profileDraft.fullName.trim() || `${relation} Member`,
+    relation,
+    birthDate: state.profileDraft.birthDate,
+    gender: state.profileDraft.gender,
+    note: state.profileDraft.note,
+    avatarUrl: state.profileDraft.avatarUrl || undefined,
+  };
+}
+
+function createManualReportInput(state: HealthAppState): CreateManualReportInput {
+  const panelBiomarkers = getManualBiomarkersForPanel(state.manualEntryDraft.panel);
+  const biomarkerMap = new Map<string, (typeof panelBiomarkers)[number]>(
+    panelBiomarkers.map((item) => [item.code, item]),
+  );
+  const results = Object.entries(state.manualEntryDraft.values)
+    .filter(([, value]) => value.trim() !== "")
+    .map(([code, rawValue], index) => {
+      const numericValue = Number(rawValue);
+      const biomarker = biomarkerMap.get(code);
+      const isKidneyMetric = code === "CRE" || code === "BUN" || code === "UA" || code === "EGFR";
+      const isMetabolicMetric = code === "GLU" || code === "HBA1C" || code === "CHOL" || code === "TRIG";
+      const unit = biomarker?.unit ?? "U/L";
+      const category = isKidneyMetric ? "Kidney Function" : isMetabolicMetric ? "Metabolic" : "Liver Function";
+      const referenceText =
+        code === "TBIL"
+          ? "Ref 0.1 - 1.2 mg/dL"
+          : code === "CRE"
+            ? "Ref 0.7 - 1.3 mg/dL"
+            : code === "BUN"
+              ? "Ref 7 - 20 mg/dL"
+              : code === "UA"
+                ? "Ref 3.5 - 7.2 mg/dL"
+                : code === "EGFR"
+                  ? "Ref > 90 mL/min/1.73m2"
+                  : code === "GLU"
+                    ? "Ref 70 - 99 mg/dL"
+                    : code === "HBA1C"
+                      ? "Ref 4.0 - 5.6%"
+                      : code === "CHOL"
+                        ? "Ref < 200 mg/dL"
+                        : code === "TRIG"
+                          ? "Ref < 150 mg/dL"
+                          : "Ref 7 - 55 U/L";
+
+      return createResult(
+        `manual_${code}_${index}`,
+        code,
+        biomarker?.name ?? code,
+        category,
+        numericValue,
+        unit,
+        referenceText,
+        numericValue > 40 ? "high" : "normal",
+      );
+    });
+
+  return {
+    profileId: state.activeProfileId,
+    title: state.manualEntryDraft.panel,
+    date: state.manualEntryDraft.date,
+    examType: state.manualEntryDraft.examType,
+    results,
+  };
+}
+
+function createUploadedReportInput(
+  state: HealthAppState,
+  input: Pick<CreateUploadedReportInput, "fileName" | "sourceType">,
+): CreateUploadedReportInput {
+  return {
+    profileId: state.activeProfileId,
+    fileName: input.fileName,
+    examType: state.scanSession.examType,
+    sourceType: input.sourceType,
+  };
 }
 
 function formatDateLabel(date: string) {
@@ -523,8 +767,20 @@ function sceneToTag(sceneType: SceneType) {
 }
 
 function deriveStoreData(state: HealthAppState) {
+  const fallbackProfile: Profile = {
+    id: "",
+    userId: state.auth.currentUserId ?? "",
+    name: "Guest",
+    relation: "Me",
+    initials: "GU",
+    memberId: "N/A",
+    birthDate: "",
+    gender: "",
+    note: "",
+    avatarUrl: "",
+  };
   const currentProfile =
-    state.profiles.find((profile) => profile.id === state.activeProfileId) ?? state.profiles[0];
+    state.profiles.find((profile) => profile.id === state.activeProfileId) ?? state.profiles[0] ?? fallbackProfile;
 
   const profileReports = [...state.reports]
     .filter((report) => report.profileId === currentProfile.id)
@@ -533,22 +789,49 @@ function deriveStoreData(state: HealthAppState) {
   const selectedReport =
     profileReports.find((report) => report.id === state.selectedReportId) ?? profileReports[0] ?? null;
 
-  const familyProfileItems: FamilyProfileItem[] = [
-    ...state.profiles.map((profile) => ({
-      id: profile.id,
-      name: profile.relation === "Me" ? "Me" : profile.name,
-      initials: profile.initials,
-      accent: profile.id === state.activeProfileId,
-    })),
-    { id: "add-profile", name: "Add", initials: "+", dashed: true },
-  ];
+  const familyProfileItems: FamilyProfileItem[] = state.profiles.map((profile) => ({
+    id: profile.id,
+    name: profile.relation === "Me" ? "Me" : profile.name,
+    initials: profile.initials,
+    accent: profile.id === state.activeProfileId,
+  }));
 
   const recentRecordItems: RecentRecordItem[] = profileReports.slice(0, 3).map((report) => ({
+    id: report.id,
     title: report.title,
     date: formatDateLabel(report.date),
     location: report.location,
     tag: sceneToTag(report.sceneType),
-    tone: report.sourceType === "manual" ? "accent" : report.sceneType === "INPATIENT" ? "accent" : "success",
+    status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
+    tone:
+      report.status === "failed"
+        ? "danger"
+        : report.sourceType === "manual"
+          ? "accent"
+          : report.sceneType === "INPATIENT"
+            ? "accent"
+            : "success",
+  }));
+
+  const reportArchiveItems: ReportArchiveItem[] = profileReports.map((report) => ({
+    id: report.id,
+    rawDate: report.date,
+    title: report.title,
+    date: formatDateLabel(report.date),
+    location: report.location,
+    examType: report.examType,
+    sourceType: report.sourceType,
+    status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
+    aiAccuracy: `${report.aiAccuracy.toFixed(1)}%`,
+    savedAt: state.reportSavedAt[report.id],
+    tone:
+      report.status === "failed"
+        ? "danger"
+        : report.status === "processing"
+        ? "warning"
+        : report.sourceType === "manual" || report.sceneType === "INPATIENT"
+          ? "accent"
+          : "success",
   }));
 
   const categoryMap = new Map<string, BiomarkerResult[]>();
@@ -644,6 +927,7 @@ function deriveStoreData(state: HealthAppState) {
     currentProfile,
     familyProfileItems,
     recentRecordItems,
+    reportArchiveItems,
     healthCategoryItems,
     biomarkerTrendItems,
     reportBiomarkerGroups,
@@ -663,18 +947,28 @@ type HealthStoreValue = {
   actions: {
     setLoginField: (field: keyof AuthDraft, value: string) => void;
     setRegisterField: (field: keyof AuthDraft, value: string) => void;
-    login: () => void;
-    register: () => void;
+    login: () => Promise<boolean>;
+    register: () => Promise<boolean>;
+    sendRegisterCode: () => string;
     logout: () => void;
     selectProfile: (profileId: string) => void;
+    beginCreateProfile: () => void;
+    deleteProfile: (profileId: string) => Promise<boolean>;
+    deleteActiveProfile: () => Promise<boolean>;
     setProfileDraftField: (field: keyof ProfileDraft, value: string) => void;
-    saveProfile: () => void;
+    saveProfile: () => Promise<boolean>;
+    saveSelectedReport: () => Promise<boolean>;
+    setScanExamType: (examType: ExamType) => void;
+    setScanProgress: (progress: number) => void;
     startScan: () => void;
-    completeScan: () => void;
+    createUploadedReport: (input: Pick<CreateUploadedReportInput, "fileName" | "sourceType">) => Promise<boolean>;
+    completeScan: () => Promise<Report | null>;
+    retrySelectedScan: () => Promise<boolean>;
     selectReport: (reportId: string) => void;
+    loadReportResults: (reportId: string) => Promise<boolean>;
     setManualMeta: (field: "date" | "examType" | "panel", value: string) => void;
     setManualValue: (code: string, value: string) => void;
-    submitManualEntry: () => void;
+    submitManualEntry: () => Promise<boolean>;
   };
 };
 
@@ -682,27 +976,36 @@ const HealthStoreContext = createContext<HealthStoreValue | null>(null);
 
 export function HealthStoreProvider({ children }: PropsWithChildren) {
   const api = useMemo(() => createHealthApi(), []);
-  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+  const initialState = useMemo(() => createInitialState(), []);
+  const [state, dispatch] = useReducer(reducer, initialState);
   const [hydrated, setHydrated] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const mode: "local" | "remote" = import.meta.env.VITE_API_BASE_URL ? "remote" : "local";
+
+  const hydrateFromApi = async () => {
+    const { session, profiles, reports, preferences, clientState } = await api.bootstrap();
+
+    dispatch({
+      type: "hydrate",
+      state: mergeHydratedState(initialState, {
+        session,
+        profiles,
+        reports,
+        preferences,
+        clientState,
+      }),
+    });
+    setHydrated(true);
+    setSyncError(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
 
-    api
-      .loadState()
-      .then((loadedState) => {
+    hydrateFromApi()
+      .then(() => {
         if (cancelled) {
           return;
         }
-
-        if (loadedState) {
-          dispatch({ type: "hydrate", state: loadedState });
-        }
-
-        setHydrated(true);
-        setSyncError(null);
       })
       .catch((error: unknown) => {
         if (cancelled) {
@@ -716,47 +1019,286 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, initialState]);
 
   useEffect(() => {
     if (!hydrated) {
       return;
     }
 
-    api.saveState(state).catch((error: unknown) => {
-      setSyncError(error instanceof Error ? error.message : "Failed to save state");
+    api.preferences.update(pickPreferences(state)).catch((error: unknown) => {
+      setSyncError(error instanceof Error ? error.message : "Failed to save user preferences");
     });
-  }, [api, hydrated, state]);
+  }, [
+    api,
+    hydrated,
+    state.activeProfileId,
+    state.selectedReportId,
+  ]);
+
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    api.clientState.update(pickClientState(state)).catch((error: unknown) => {
+      setSyncError(error instanceof Error ? error.message : "Failed to save local draft state");
+    });
+  }, [
+    api,
+    hydrated,
+    state.profileDraft,
+    state.profileDraftState,
+    state.scanSession,
+    state.manualEntryDraft,
+  ]);
 
   const value = useMemo<HealthStoreValue>(() => {
     const derived = deriveStoreData(state);
+    const deleteProfile = async (profileId: string) => {
+      if (!profileId) {
+        return false;
+      }
+
+      try {
+        const payload = await api.profiles.delete(profileId);
+        dispatch({ type: "profiles/deleteSuccess", payload });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to delete profile");
+        return false;
+      }
+    };
 
     return {
       state,
       derived,
       sync: {
         hydrated,
-        mode,
+        mode: api.mode,
         error: syncError,
       },
       actions: {
         setLoginField: (field, value) => dispatch({ type: "auth/loginField", field, value }),
         setRegisterField: (field, value) => dispatch({ type: "auth/registerField", field, value }),
-        login: () => dispatch({ type: "auth/login" }),
-        register: () => dispatch({ type: "auth/register" }),
-        logout: () => dispatch({ type: "auth/logout" }),
+        login: async () => {
+          try {
+            const session = await api.auth.login({
+              email: state.auth.loginDraft.email,
+              password: state.auth.loginDraft.password,
+            });
+            dispatch({ type: "auth/loginSuccess", currentUserId: session.currentUserId });
+            await hydrateFromApi();
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to login");
+            return false;
+          }
+        },
+        register: async () => {
+          try {
+            const session = await api.auth.register(state.auth.registerDraft);
+            dispatch({
+              type: "auth/registerSuccess",
+              currentUserId: session.currentUserId,
+              email: state.auth.registerDraft.email,
+              password: state.auth.registerDraft.password,
+            });
+            await hydrateFromApi();
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to register");
+            return false;
+          }
+        },
+        sendRegisterCode: () => {
+          const code = `${Math.floor(100000 + Math.random() * 900000)}`;
+          dispatch({ type: "auth/registerField", field: "code", value: code });
+          setSyncError(null);
+          return code;
+        },
+        logout: () => {
+          void api.auth
+            .logout()
+            .then(() => {
+              dispatch({ type: "auth/logoutSuccess" });
+              return hydrateFromApi();
+            })
+            .then(() => {
+              setSyncError(null);
+            })
+            .catch((error: unknown) => {
+              setSyncError(error instanceof Error ? error.message : "Failed to logout");
+            });
+        },
         selectProfile: (profileId) => dispatch({ type: "profiles/select", profileId }),
+        beginCreateProfile: () => dispatch({ type: "profileDraft/startCreate" }),
+        deleteProfile,
+        deleteActiveProfile: async () => {
+          return deleteProfile(state.activeProfileId);
+        },
         setProfileDraftField: (field, value) => dispatch({ type: "profileDraft/set", field, value }),
-        saveProfile: () => dispatch({ type: "profileDraft/save" }),
+        saveProfile: async () => {
+          if (state.profileDraftState.mode === "create") {
+            try {
+              const profile = await api.profiles.create(createProfileFromDraft(state));
+              dispatch({ type: "profiles/createSuccess", profile });
+              await api.clientState.update({
+                profileAvatarUrls: {
+                  ...pickClientState(state).profileAvatarUrls,
+                  ...(profile.avatarUrl ? { [profile.id]: profile.avatarUrl } : {}),
+                },
+              });
+              await hydrateFromApi();
+              setSyncError(null);
+              return true;
+            } catch (error: unknown) {
+              setSyncError(error instanceof Error ? error.message : "Failed to create profile");
+              return false;
+            }
+          }
+
+          const update = createProfileUpdate(state);
+
+          if (!update) {
+            return false;
+          }
+
+          try {
+            const profile = await api.profiles.update(update.profileId, update.patch);
+            dispatch({ type: "profileDraft/saveSuccess", profile });
+            await api.clientState.update({
+              profileAvatarUrls: {
+                ...pickClientState(state).profileAvatarUrls,
+                ...(profile.avatarUrl ? { [profile.id]: profile.avatarUrl } : {}),
+              },
+            });
+            await hydrateFromApi();
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to save profile");
+            return false;
+          }
+        },
+        saveSelectedReport: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          const savedAt = new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            day: "2-digit",
+            year: "numeric",
+          }).format(new Date());
+
+          dispatch({ type: "reports/save", reportId: state.selectedReportId, savedAt });
+
+          try {
+            await api.clientState.update({
+              reportSavedAt: {
+                ...pickClientState(state).reportSavedAt,
+                [state.selectedReportId]: savedAt,
+              },
+            });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to save report state");
+            return false;
+          }
+        },
+        setScanExamType: (examType) => dispatch({ type: "scan/setExamType", examType }),
+        setScanProgress: (progress) => dispatch({ type: "scan/setProgress", progress }),
         startScan: () => dispatch({ type: "scan/start" }),
-        completeScan: () => dispatch({ type: "scan/complete" }),
+        createUploadedReport: async (input) => {
+          try {
+            const report = await api.reports.createUploaded(createUploadedReportInput(state, input));
+            dispatch({ type: "reports/createUploadedSuccess", report });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to create uploaded report");
+            return false;
+          }
+        },
+        completeScan: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return null;
+          }
+
+          try {
+            const report = await api.reports.completeScan(state.selectedReportId);
+            dispatch({ type: "scan/completeSuccess", report });
+            setSyncError(null);
+            return report;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to complete scan");
+            return null;
+          }
+        },
+        retrySelectedScan: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          try {
+            const report = await api.reports.retryScan(state.selectedReportId);
+            dispatch({ type: "scan/retrySuccess", report });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to retry scan");
+            return false;
+          }
+        },
         selectReport: (reportId) => dispatch({ type: "reports/select", reportId }),
+        loadReportResults: async (reportId) => {
+          try {
+            const results = await api.reports.getResults(reportId);
+            dispatch({ type: "reports/resultsLoaded", reportId, results });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to load report results");
+            return false;
+          }
+        },
         setManualMeta: (field, value) => dispatch({ type: "manual/setMeta", field, value }),
         setManualValue: (code, value) => dispatch({ type: "manual/setValue", code, value }),
-        submitManualEntry: () => dispatch({ type: "manual/submit" }),
+        submitManualEntry: async () => {
+          const hasDate = state.manualEntryDraft.date.trim() !== "";
+          const hasAnyValue = Object.values(state.manualEntryDraft.values).some((value) => value.trim() !== "");
+
+          if (!hasDate) {
+            setSyncError("Please select the laboratory test date.");
+            return false;
+          }
+
+          if (!hasAnyValue) {
+            setSyncError("Enter at least one biomarker value before submitting.");
+            return false;
+          }
+
+          try {
+            const report = await api.reports.createManual(createManualReportInput(state));
+            dispatch({ type: "manual/submitSuccess", report });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to submit manual report");
+            return false;
+          }
+        },
       },
     };
-  }, [hydrated, mode, state, syncError]);
+  }, [api, hydrated, state, syncError]);
 
   return <HealthStoreContext.Provider value={value}>{children}</HealthStoreContext.Provider>;
 }

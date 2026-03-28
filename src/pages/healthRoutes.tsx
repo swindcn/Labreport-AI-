@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { PhoneFrame } from "@/components/mobile/PhoneFrame";
 import { Chip } from "@/components/ui/Chip";
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -12,6 +13,7 @@ import {
   InsightCard,
   Label,
   RouteButton,
+  SelectInput,
   SegmentedControl,
   SocialButton,
   TextAreaInput,
@@ -26,11 +28,14 @@ import {
   ManualBiomarkerFields,
   MonthlyTrendList,
   ProfileMenuSections,
+  ReportArchiveList,
   RecentRecordsSection,
   ReportBiomarkerSections,
 } from "@/components/health/sections";
 import {
-  manualBiomarkers,
+  getManualBiomarkersForPanel,
+  manualPanelOptions,
+  profileRelationOptions,
   profileMenu,
 } from "@/lib/healthData";
 import { useHealthStore } from "@/lib/healthStore";
@@ -41,6 +46,112 @@ const inAppTabs = [
   { label: "TRENDS", to: "/trends" },
   { label: "PROFILE", to: "/profile" },
 ];
+
+const PROFILE_FORM_RETURN_KEY = "vitalis-profile-form-return-path";
+
+function setProfileFormReturnPath(path: string) {
+  window.sessionStorage.setItem(PROFILE_FORM_RETURN_KEY, path);
+}
+
+function getProfileFormReturnPath() {
+  return window.sessionStorage.getItem(PROFILE_FORM_RETURN_KEY);
+}
+
+function consumeProfileFormReturnPath(fallback: string) {
+  const path = getProfileFormReturnPath() ?? fallback;
+  window.sessionStorage.removeItem(PROFILE_FORM_RETURN_KEY);
+  return path;
+}
+
+function renderAvatarContent(initials: string, avatarUrl?: string) {
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />;
+  }
+
+  return initials;
+}
+
+function readImageFile(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      const maxSize = 160;
+      const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+      const canvas = document.createElement("canvas");
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Failed to process image"));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
+      URL.revokeObjectURL(objectUrl);
+      resolve(dataUrl);
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to read image file"));
+    };
+
+    image.src = objectUrl;
+  });
+}
+
+function formatReportAnalysisMeta(date: string, location: string) {
+  return `${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  }).format(new Date(date))} • ${location}`;
+}
+
+type UploadSourceKind = "camera" | "gallery" | "files";
+
+type PendingUploadSelection = {
+  source: UploadSourceKind;
+  sourceType: "image" | "pdf";
+  fileName: string;
+  fileSizeLabel: string;
+  previewUrl: string | null;
+};
+
+const MAX_IMAGE_FILE_SIZE_BYTES = 12 * 1024 * 1024;
+const MAX_PDF_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
+function getUploadSourceType(file: File) {
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    return "pdf" as const;
+  }
+
+  return "image" as const;
+}
+
+function getUploadSourceLabel(source: UploadSourceKind) {
+  if (source === "camera") return "Camera";
+  if (source === "gallery") return "Gallery";
+  return "Files";
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 function ScreensIndexPage() {
   const { state, derived, sync } = useHealthStore();
@@ -92,7 +203,29 @@ function ScreensIndexPage() {
 }
 
 function HomePage() {
-  const { actions, sync } = useHealthStore();
+  const { state, derived, actions, sync } = useHealthStore();
+
+  const handleOpenUpload = () => {
+    window.location.hash = "#/report-upload";
+  };
+
+  const handleOpenRecentReport = (reportId: string) => {
+    actions.selectReport(reportId);
+  };
+
+  const recentSelectionTiles: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    route: string;
+    tone: "dark" | "blue" | "empty";
+  }> = derived.recentRecordItems.slice(0, 3).map((record, index) => ({
+    id: record.id,
+    title: record.title,
+    detail: record.location,
+    route: record.status === "READY" ? "/report-analysis" : "/scanning",
+    tone: index === 0 ? "dark" : index === 1 ? "blue" : "empty",
+  }));
 
   return (
     <PhoneFrame header={<TopBar left="≡" title="Health Analysis" right={<AvatarBadge label="DR" />} />}>
@@ -107,13 +240,17 @@ function HomePage() {
 
       <Card>
         <Label>EXAMINATION TYPE</Label>
-        <SegmentedControl items={["Routine", "Clinical"]} active="Routine" />
+        <SegmentedControl
+          items={["Routine", "Clinical"]}
+          active={state.scanSession.examType}
+          onChange={(value) => actions.setScanExamType(value as "Routine" | "Clinical")}
+        />
       </Card>
 
       <div className="grid grid-cols-3 gap-3">
-        <ActionTile label="Camera" icon="CA" />
-        <ActionTile label="Gallery" icon="GA" />
-        <ActionTile label="Files" icon="FI" />
+        <ActionTile label="Camera" icon="CA" detail={state.scanSession.examType} onClick={handleOpenUpload} />
+        <ActionTile label="Gallery" icon="GA" detail={state.scanSession.examType} onClick={handleOpenUpload} />
+        <ActionTile label="Files" icon="FI" detail={state.scanSession.examType} onClick={handleOpenUpload} />
       </div>
 
       <section>
@@ -122,9 +259,11 @@ function HomePage() {
           <Chip label="LAST 24 HOURS" tone="accent" />
         </div>
         <div className="mt-3 grid grid-cols-3 gap-3">
-          <ThumbTile tone="dark" />
-          <ThumbTile tone="blue" />
-          <ThumbTile tone="empty" />
+          {recentSelectionTiles.map((record) => (
+            <RouteLink key={record.id} to={record.route} onClick={() => handleOpenRecentReport(record.id)}>
+              <ThumbTile tone={record.tone} title={record.title} detail={record.detail} />
+            </RouteLink>
+          ))}
         </div>
       </section>
 
@@ -138,7 +277,7 @@ function HomePage() {
         </div>
       </div>
 
-      <RouteButton to="/scanning" onClick={actions.startScan}>
+      <RouteButton to="/report-upload">
         Start Analysis
       </RouteButton>
       {!sync.hydrated ? (
@@ -154,7 +293,20 @@ function HomePage() {
 }
 
 function DashboardPage() {
-  const { derived, actions } = useHealthStore();
+  const { state, derived, sync, actions } = useHealthStore();
+
+  const handleOpenMemberList = () => {
+    if (!state.auth.currentUserId) {
+      window.location.hash = "#/login";
+      return;
+    }
+
+    window.location.hash = "#/member-list";
+  };
+
+  const handleOpenReport = (reportId: string) => {
+    actions.selectReport(reportId);
+  };
 
   return (
     <PhoneFrame header={<TopBar left="≡" title="Vitalis Core" right={<AvatarBadge label="ME" />} />}>
@@ -167,9 +319,16 @@ function DashboardPage() {
       <FamilyProfilesStrip
         profiles={derived.familyProfileItems}
         activeId={derived.currentProfile.id}
-        actionLabel="+ Add Member"
+        actionLabel="Member List"
         onSelect={actions.selectProfile}
+        onAction={handleOpenMemberList}
       />
+      {!state.auth.currentUserId ? (
+        <p className="px-1 text-sm font-medium text-[#1E40AF]">Sign in to create and manage family profiles.</p>
+      ) : null}
+      {sync.error ? (
+        <p className="px-1 text-sm font-medium text-[#d92d20]">{sync.error}</p>
+      ) : null}
 
       <div className="rounded-[1.9rem] bg-[linear-gradient(135deg,_#1E40AF,_#3156D3)] px-5 py-5 text-white shadow-[0_22px_50px_rgba(30,64,175,0.32)]">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-sm font-semibold">
@@ -181,34 +340,330 @@ function DashboardPage() {
         <p className="mt-3 text-sm leading-6 text-white/80">
           Choose between instant AI scan or manual data entry for your results.
         </p>
-        <RouteLink
-          to="/scanning"
-          onClick={actions.startScan}
-          className="mt-5 flex w-full items-center justify-center rounded-[1.2rem] bg-white px-4 py-3 text-base font-semibold text-[#1E40AF]"
-        >
-          Analyze Now →
-        </RouteLink>
-        <RouteLink
-          to="/manual-entry"
-          className="mt-3 flex w-full items-center justify-center rounded-[1.2rem] border border-white/25 bg-white/8 px-4 py-3 text-base font-semibold text-white"
-        >
-          Manual Entry
-        </RouteLink>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <RouteLink
+            to="/report-upload"
+            className="flex items-center justify-center rounded-[1.2rem] bg-white px-4 py-3 text-base font-semibold text-[#1E40AF]"
+          >
+            Analyze →
+          </RouteLink>
+          <RouteLink
+            to="/manual-entry"
+            className="flex items-center justify-center rounded-[1.2rem] border border-white/25 bg-white/8 px-4 py-3 text-base font-semibold text-white"
+          >
+            Manual Entry
+          </RouteLink>
+        </div>
       </div>
 
-      <RecentRecordsSection records={derived.recentRecordItems} viewAllTo="/trends" />
+      <RecentRecordsSection
+        records={derived.recentRecordItems}
+        viewAllTo="/reports-archive"
+        onSelectRecord={handleOpenReport}
+      />
 
       <BottomTabs active="/dashboard" items={inAppTabs} />
     </PhoneFrame>
   );
 }
 
+function UploadReportPage() {
+  const { state, derived, sync, actions } = useHealthStore();
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const filesInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<PendingUploadSelection | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pendingUpload?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(pendingUpload.previewUrl);
+      }
+    };
+  }, [pendingUpload?.previewUrl]);
+
+  const selectSource = (source: UploadSourceKind) => {
+    if (source === "camera") {
+      cameraInputRef.current?.click();
+      return;
+    }
+
+    if (source === "gallery") {
+      galleryInputRef.current?.click();
+      return;
+    }
+
+    filesInputRef.current?.click();
+  };
+
+  const handleSelectedFile = (source: UploadSourceKind, file: File | null) => {
+    if (!file) {
+      return;
+    }
+
+    const sourceType = getUploadSourceType(file);
+    const isImage = sourceType === "image";
+    const isPdf = sourceType === "pdf";
+
+    if ((source === "camera" || source === "gallery") && !isImage) {
+      setValidationError("Camera and Gallery only support image files.");
+      return;
+    }
+
+    if (source === "files" && !isImage && !isPdf) {
+      setValidationError("Files only supports JPG, PNG, WEBP, HEIC, or PDF documents.");
+      return;
+    }
+
+    if (isImage && file.size > MAX_IMAGE_FILE_SIZE_BYTES) {
+      setValidationError("Image file is too large. Please choose an image smaller than 12 MB.");
+      return;
+    }
+
+    if (isPdf && file.size > MAX_PDF_FILE_SIZE_BYTES) {
+      setValidationError("PDF file is too large. Please choose a document smaller than 20 MB.");
+      return;
+    }
+
+    setPendingUpload((current) => {
+      if (current?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+
+      return {
+        source,
+        sourceType,
+        fileName: file.name || (sourceType === "pdf" ? "Imported Report.pdf" : "Camera Capture.jpg"),
+        fileSizeLabel: formatFileSize(file.size),
+        previewUrl: sourceType === "image" ? URL.createObjectURL(file) : null,
+      };
+    });
+    setValidationError(null);
+  };
+
+  const handleFileChange =
+    (source: UploadSourceKind) =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      handleSelectedFile(source, event.target.files?.[0] ?? null);
+      event.target.value = "";
+    };
+
+  const handleStartAnalysis = () => {
+    if (!pendingUpload || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    void actions
+      .createUploadedReport({
+        fileName: pendingUpload.fileName,
+        sourceType: pendingUpload.sourceType,
+      })
+      .then((created) => {
+        if (created) {
+          window.location.hash = "#/scanning";
+        }
+      })
+      .finally(() => {
+        setIsSubmitting(false);
+      });
+  };
+
+  return (
+    <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Upload Report" right={<AvatarBadge label={derived.currentProfile.initials} />} />}>
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFileChange("camera")}
+      />
+      <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange("gallery")} />
+      <input
+        ref={filesInputRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        className="hidden"
+        onChange={handleFileChange("files")}
+      />
+
+      <div className="px-1">
+        <Label>DOCUMENT INPUT</Label>
+        <h2 className="mt-2 text-[2.3rem] font-semibold leading-[0.96] tracking-[-0.04em] text-slate-900">
+          Choose report photo, camera, or file
+        </h2>
+        <p className="mt-3 text-[1.02rem] leading-7 text-slate-500">
+          Select how you want to import the report for {derived.currentProfile.name}. We will create a new analysis record and move it through the scan flow.
+        </p>
+      </div>
+
+      <Card>
+        <Label>EXAMINATION TYPE</Label>
+        <SegmentedControl
+          items={["Routine", "Clinical"]}
+          active={state.scanSession.examType}
+          onChange={(value) => actions.setScanExamType(value as "Routine" | "Clinical")}
+        />
+      </Card>
+
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { source: "camera" as const, label: "Camera", icon: "CA", detail: "Take photo" },
+          { source: "gallery" as const, label: "Gallery", icon: "GA", detail: "Choose image" },
+          { source: "files" as const, label: "Files", icon: "FI", detail: "PDF or image" },
+        ].map((item) => {
+          const active = pendingUpload?.source === item.source;
+
+          return (
+            <div key={item.source} className={active ? "rounded-[1.9rem] ring-2 ring-[#1E40AF] ring-offset-2 ring-offset-[#f9fbff]" : ""}>
+              <ActionTile
+                label={item.label}
+                icon={item.icon}
+                detail={item.detail}
+                onClick={() => selectSource(item.source)}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <Card className="bg-[#f4f7ff]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Label>SELECTED INPUT</Label>
+            <p className="mt-2 text-lg font-semibold text-slate-900">
+              {pendingUpload ? pendingUpload.fileName : "No report chosen yet"}
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {pendingUpload
+                ? `${getUploadSourceLabel(pendingUpload.source)} • ${pendingUpload.sourceType === "pdf" ? "PDF document" : "Image capture"}`
+                : "Choose one of the three input methods above to continue."}
+            </p>
+            {pendingUpload ? <p className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{pendingUpload.fileSizeLabel}</p> : null}
+          </div>
+          {pendingUpload ? (
+            <Chip label={pendingUpload.sourceType === "pdf" ? "PDF" : "IMAGE"} tone="accent" />
+          ) : null}
+        </div>
+
+        {pendingUpload?.previewUrl ? (
+          <div className="mt-4 overflow-hidden rounded-[1.3rem] bg-white">
+            <img src={pendingUpload.previewUrl} alt="" className="h-44 w-full object-cover" />
+          </div>
+        ) : pendingUpload?.sourceType === "pdf" ? (
+          <div className="mt-4 flex h-32 items-center justify-center rounded-[1.3rem] bg-[#1E40AF] text-sm font-semibold uppercase tracking-[0.18em] text-white">
+            PDF Ready
+          </div>
+        ) : null}
+      </Card>
+
+      <Card className="bg-white">
+        <div className="flex gap-3">
+          <CircleIcon label="i" tone="accent" />
+          <p className="text-[1.02rem] leading-7 text-slate-500">
+            Camera and Gallery accept images up to 12 MB. Files accepts image documents up to 12 MB or PDFs up to 20 MB. The report will first enter processing, then open in Report Analysis after scan completion.
+          </p>
+        </div>
+      </Card>
+
+      <button
+        type="button"
+        onClick={handleStartAnalysis}
+        disabled={!pendingUpload || isSubmitting}
+        className={`inline-flex items-center justify-center rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
+          pendingUpload && !isSubmitting
+            ? "bg-[#1E40AF] text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+            : "bg-[#d9dfef] text-slate-500"
+        }`}
+      >
+        {isSubmitting ? "Creating Scan..." : "Start Analysis"}
+      </button>
+      {validationError ? <p className="text-center text-xs font-semibold text-[#d92d20]">{validationError}</p> : null}
+      {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
+    </PhoneFrame>
+  );
+}
+
 function ScanningPage() {
-  const { state, actions } = useHealthStore();
+  const { state, derived, sync, actions } = useHealthStore();
+  const selectedReport = derived.selectedReport;
+  const autoCompleteStartedRef = useRef(false);
+  const setScanProgress = actions.setScanProgress;
+  const completeScan = actions.completeScan;
+  const retrySelectedScan = actions.retrySelectedScan;
+  const hasScanFailure = selectedReport?.status === "failed";
+  const scanFailureCode = selectedReport?.scanFailureCode;
+
+  useEffect(() => {
+    if (!selectedReport?.id || selectedReport.status === "ready" || selectedReport.status === "failed") {
+      return;
+    }
+
+    autoCompleteStartedRef.current = false;
+  }, [selectedReport?.id, selectedReport?.status]);
+
+  useEffect(() => {
+    if (!selectedReport?.id || selectedReport.status === "ready" || selectedReport.status === "failed") {
+      return;
+    }
+
+    if (state.scanSession.progress >= 100 || autoCompleteStartedRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const step = state.scanSession.progress < 40 ? 18 : state.scanSession.progress < 75 ? 11 : 6;
+      const nextProgress = Math.min(100, state.scanSession.progress + step);
+
+      setScanProgress(nextProgress);
+
+      if (nextProgress >= 100 && !autoCompleteStartedRef.current) {
+        autoCompleteStartedRef.current = true;
+        window.setTimeout(() => {
+          void completeScan().then((completedReport) => {
+            if (completedReport?.status === "ready") {
+              window.location.hash = "#/report-analysis";
+            } else if (!completedReport) {
+              autoCompleteStartedRef.current = false;
+            }
+          });
+        }, 450);
+      }
+    }, state.scanSession.progress < 90 ? 420 : 620);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    completeScan,
+    selectedReport?.id,
+    selectedReport?.status,
+    setScanProgress,
+    state.scanSession.progress,
+  ]);
+
+  useEffect(() => {
+    if (selectedReport?.status === "ready" && state.scanSession.progress >= 100) {
+      const timer = window.setTimeout(() => {
+        window.location.hash = "#/report-analysis";
+      }, 650);
+
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+  }, [selectedReport?.status, state.scanSession.progress]);
+
+  const handleRetryScan = () => {
+    void retrySelectedScan();
+  };
 
   return (
     <PhoneFrame
-      header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Health Analysis" right={<AvatarBadge label="ID" dark />} centered />}
+      header={<TopBar left={<RouteLink to="/report-upload">←</RouteLink>} title="Health Analysis" right={<AvatarBadge label="ID" dark />} centered />}
     >
       <div className="rounded-[2rem] bg-white px-5 py-6 shadow-[0_18px_50px_rgba(135,149,198,0.14)]">
         <div className="h-4 w-44 rounded-full bg-[#eef2fb]" />
@@ -236,50 +691,126 @@ function ScanningPage() {
 
       <div className="px-2 pt-2 text-center">
         <h2 className="text-[2.2rem] font-semibold leading-[1.05] tracking-[-0.04em] text-slate-900">
-          Extracting report content...
+          Extracting {state.scanSession.examType.toLowerCase()} report content...
         </h2>
         <p className="mx-auto mt-4 max-w-[16rem] text-[1.2rem] leading-8 text-slate-500">
           Identifying biomarkers, results, and reference ranges.
         </p>
+        {selectedReport ? (
+          <p className="mx-auto mt-3 max-w-[16rem] text-sm font-semibold text-[#1E40AF]">
+            {selectedReport.title} • {selectedReport.sourceType.toUpperCase()}
+          </p>
+        ) : null}
       </div>
 
       <div className="pt-2">
         <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <span>Analyzing Structure</span>
-          <span>{state.scanSession.progress}%</span>
+          <span>{hasScanFailure ? "FAILED" : `${state.scanSession.progress}%`}</span>
         </div>
         <div className="mt-3 h-2 rounded-full bg-[#e5e9f4]">
-          <div className="h-2 rounded-full bg-[#1E40AF]" style={{ width: `${state.scanSession.progress}%` }} />
+          <div
+            className={`h-2 rounded-full ${hasScanFailure ? "bg-[#f35650]" : "bg-[#1E40AF]"}`}
+            style={{ width: `${state.scanSession.progress}%` }}
+          />
         </div>
       </div>
 
-      <Card className="bg-[#f2f6ff]">
+      <Card className={hasScanFailure ? "bg-[#fff4f3]" : "bg-[#f2f6ff]"}>
         <div className="flex gap-3">
-          <CircleIcon label="i" tone="accent" />
+          <CircleIcon label={hasScanFailure ? "!" : "i"} tone={hasScanFailure ? "danger" : "accent"} />
           <p className="text-[1.05rem] leading-7 text-slate-500">
-            You'll be able to review and correct the results once identification is complete.
+            {selectedReport?.status === "ready"
+              ? "Scan complete. Opening the report analysis view automatically."
+              : hasScanFailure
+                ? selectedReport?.scanFailureMessage ?? "The scan failed. Retry the task or upload another report file."
+                : "Running OCR, classifying biomarkers, and validating extracted values. You will be redirected automatically once processing completes."}
           </p>
         </div>
       </Card>
-
-      <RouteButton to="/report-analysis" onClick={actions.completeScan}>
-        Continue to Analysis
-      </RouteButton>
+      {hasScanFailure ? (
+        <div className="grid grid-cols-2 gap-3">
+          {scanFailureCode === "ocr_failed" ? (
+            <button
+              type="button"
+              onClick={handleRetryScan}
+              className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+            >
+              Retry OCR
+            </button>
+          ) : (
+            <RouteButton to="/report-upload">Upload Another File</RouteButton>
+          )}
+          <RouteButton to="/report-upload" tone="secondary">
+            Back to Upload
+          </RouteButton>
+        </div>
+      ) : sync.error ? (
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              void completeScan();
+            }}
+            className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+          >
+            Retry Request
+          </button>
+          <RouteButton to="/report-upload" tone="secondary">
+            Back to Upload
+          </RouteButton>
+        </div>
+      ) : null}
+      {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
+      {!hasScanFailure ? (
+        <p className="text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+          Tip: use filenames containing `ocr`, `blurry`, or `corrupt` to test failure states.
+        </p>
+      ) : null}
     </PhoneFrame>
   );
 }
 
 function ReportAnalysisPage() {
-  const { derived } = useHealthStore();
+  const { derived, sync, actions } = useHealthStore();
   const selectedReport = derived.selectedReport;
+  const selectedArchiveItem = selectedReport
+    ? derived.reportArchiveItems.find((report) => report.id === selectedReport.id)
+    : undefined;
+
+  useEffect(() => {
+    if (!sync.hydrated || !selectedReport?.id) {
+      return;
+    }
+
+    void actions.loadReportResults(selectedReport.id);
+  }, [selectedReport?.id, sync.hydrated]);
+
+  const handleSaveResults = () => {
+    void actions.saveSelectedReport().then((saved) => {
+      if (saved) {
+        window.location.hash = "#/reports-archive";
+      }
+    });
+  };
 
   return (
-    <PhoneFrame header={<TopBar left={<RouteLink to="/scanning">←</RouteLink>} title="Health Report" right="↗" />}>
+    <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Health Report" right="↗" />}>
       <div className="px-1">
         <Label>CLINICAL ANALYSIS</Label>
         <h2 className="mt-2 text-[2.5rem] font-semibold leading-[0.95] tracking-[-0.04em] text-slate-900">
           Health Report Analysis
         </h2>
+        {selectedReport ? (
+          <div className="mt-4 rounded-[1.3rem] bg-[#f4f7ff] px-4 py-4">
+            <p className="text-[1.05rem] font-semibold text-slate-900">{selectedReport.title}</p>
+            <p className="mt-1 text-sm text-slate-500">
+              {formatReportAnalysisMeta(selectedReport.date, selectedReport.location)}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">Select a report to inspect its biomarkers and AI interpretation.</p>
+        )}
       </div>
 
       <div className="grid grid-cols-[1.3fr_0.8fr] gap-3">
@@ -319,13 +850,32 @@ function ReportAnalysisPage() {
         </div>
       </section>
 
-      <RouteButton to="/trends">Save Results</RouteButton>
+      <button
+        type="button"
+        onClick={handleSaveResults}
+        className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+      >
+        Save Results
+      </button>
+      {selectedArchiveItem?.savedAt ? (
+        <p className="text-center text-xs font-semibold text-[#1E40AF]">Saved to archive on {selectedArchiveItem.savedAt}</p>
+      ) : null}
+      {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
     </PhoneFrame>
   );
 }
 
 function ManualEntryPage() {
-  const { state, actions } = useHealthStore();
+  const { state, sync, actions } = useHealthStore();
+  const panelBiomarkers = getManualBiomarkersForPanel(state.manualEntryDraft.panel);
+
+  const handleSubmitManualEntry = () => {
+    void actions.submitManualEntry().then((submitted) => {
+      if (submitted) {
+        window.location.hash = "#/report-analysis";
+      }
+    });
+  };
 
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Manual Entry" right="⋮" />}>
@@ -359,17 +909,12 @@ function ManualEntryPage() {
 
       <Card>
         <Label>SELECT LABORATORY PANEL</Label>
-        <button
-          type="button"
-          className="mt-3 flex w-full items-center justify-between rounded-[1rem] border border-[#e2e8f6] bg-white px-4 py-4"
-          onClick={() => actions.setManualMeta("panel", "Liver Function Panel")}
-        >
-          <div className="flex items-center gap-3">
-            <CircleIcon label="LF" tone="accent" />
-            <span className="font-semibold text-slate-900">{state.manualEntryDraft.panel}</span>
-          </div>
-          <span className="text-slate-400">﹀</span>
-        </button>
+        <SelectInput
+          value={state.manualEntryDraft.panel}
+          onChange={(value) => actions.setManualMeta("panel", value)}
+          placeholder="Select panel"
+          options={manualPanelOptions}
+        />
       </Card>
 
       <Card className="bg-[#f4f7ff]">
@@ -378,20 +923,27 @@ function ManualEntryPage() {
             <p className="text-[1.45rem] font-semibold leading-none text-slate-900">
               {state.manualEntryDraft.panel}
             </p>
-            <p className="mt-2 text-sm text-slate-500">6 biomarkers detected</p>
+            <p className="mt-2 text-sm text-slate-500">{panelBiomarkers.length} biomarkers detected</p>
           </div>
-          <Chip label="6 BIOMARKERS DETECTED" />
+          <Chip label={`${panelBiomarkers.length} BIOMARKERS DETECTED`} />
         </div>
         <ManualBiomarkerFields
-          items={manualBiomarkers}
+          items={panelBiomarkers}
           values={state.manualEntryDraft.values}
           onChange={actions.setManualValue}
         />
       </Card>
 
-      <RouteButton to="/report-analysis" onClick={actions.submitManualEntry}>
+      <button
+        type="button"
+        onClick={handleSubmitManualEntry}
+        className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+      >
         Save &amp; Submit Results
-      </RouteButton>
+      </button>
+      {sync.error ? (
+        <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
+      ) : null}
       <p className="text-center text-xs leading-5 text-slate-400">
         By submitting, you confirm that these values correspond to your official medical laboratory report.
       </p>
@@ -483,20 +1035,73 @@ function BiomarkerTrendsPage() {
 }
 
 function ProfileRegistrationPage() {
-  const { state, actions } = useHealthStore();
+  const { state, sync, actions } = useHealthStore();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
+  const backTo = getProfileFormReturnPath() ?? (state.auth.currentUserId ? "/dashboard" : "/register");
+
+  useEffect(() => {
+    setAvatarPreviewUrl(state.profileDraft.avatarUrl || null);
+  }, [state.profileDraft.avatarUrl]);
+
+  const handlePickAvatar = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const avatarUrl = await readImageFile(file);
+      setAvatarPreviewUrl(avatarUrl);
+      actions.setProfileDraftField("avatarUrl", avatarUrl);
+      setAvatarError(null);
+    } catch {
+      setAvatarError("Failed to load image");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleSaveProfile = () => {
+    void actions.saveProfile().then((saved) => {
+      if (saved) {
+        window.location.hash = `#${consumeProfileFormReturnPath("/dashboard")}`;
+      }
+    });
+  };
 
   return (
-    <PhoneFrame header={<TopBar left={<RouteLink to="/register">←</RouteLink>} title="Health Profile" right="⋮" />}>
+    <PhoneFrame header={<TopBar left={<RouteLink to={backTo}>←</RouteLink>} title="Health Profile" right="⋮" />}>
       <div className="flex flex-col items-center">
-        <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-[#1E40AF] text-sm font-semibold text-white">
-          USER
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+        <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full bg-[#1E40AF] text-sm font-semibold text-white">
+          {renderAvatarContent(
+            state.profileDraft.fullName
+              .split(" ")
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((part) => part[0]?.toUpperCase() ?? "")
+              .join("") || "UP",
+            avatarPreviewUrl ?? state.profileDraft.avatarUrl,
+          )}
           <div className="absolute -bottom-1 -right-1 flex h-9 w-9 items-center justify-center rounded-full bg-[#1E40AF] text-xs font-semibold">
             UP
           </div>
         </div>
-        <button className="mt-4 text-base font-semibold uppercase tracking-[0.1em] text-[#1E40AF]">
-          Upload Photo
+        <button
+          type="button"
+          onClick={handlePickAvatar}
+          className="mt-4 text-base font-semibold uppercase tracking-[0.1em] text-[#1E40AF]"
+        >
+          {state.profileDraft.avatarUrl ? "Replace Photo" : "Upload Photo"}
         </button>
+        {avatarError ? <p className="mt-2 text-xs font-semibold text-[#d92d20]">{avatarError}</p> : null}
       </div>
 
       <div>
@@ -509,6 +1114,15 @@ function ProfileRegistrationPage() {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
+          <Label>RELATIONSHIP</Label>
+          <SelectInput
+            value={state.profileDraft.relation}
+            onChange={(value) => actions.setProfileDraftField("relation", value)}
+            placeholder="Select"
+            options={profileRelationOptions}
+          />
+        </div>
+        <div>
           <Label>DATE OF BIRTH</Label>
           <TextInput
             type="date"
@@ -517,13 +1131,15 @@ function ProfileRegistrationPage() {
             placeholder="mm/dd/yyyy"
           />
         </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3">
         <div>
           <Label>GENDER IDENTITY</Label>
-          <TextInput
+          <SelectInput
             value={state.profileDraft.gender}
             onChange={(value) => actions.setProfileDraftField("gender", value)}
             placeholder="Select"
-            trailing="﹀"
+            options={["Male", "Female", "Non-binary", "Prefer not to say"]}
           />
         </div>
       </div>
@@ -548,15 +1164,38 @@ function ProfileRegistrationPage() {
         </div>
       </Card>
 
-      <RouteButton to="/dashboard" onClick={actions.saveProfile}>
-        Save and Continue
-      </RouteButton>
+      <button
+        type="button"
+        onClick={handleSaveProfile}
+        className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+      >
+        {state.profileDraftState.mode === "create" ? "Create Member" : "Save and Continue"}
+      </button>
+      {sync.error ? (
+        <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
+      ) : null}
     </PhoneFrame>
   );
 }
 
 function RegisterPage() {
-  const { state, actions } = useHealthStore();
+  const { state, sync, actions } = useHealthStore();
+  const [registerNotice, setRegisterNotice] = useState<string | null>(null);
+
+  const handleSendCode = () => {
+    const code = actions.sendRegisterCode();
+    setRegisterNotice(`Demo verification code ready: ${code}`);
+  };
+
+  const handleRegister = () => {
+    setProfileFormReturnPath("/dashboard");
+    void actions.register().then((registered) => {
+      if (registered) {
+        setRegisterNotice(null);
+        window.location.hash = "#/profile-registration";
+      }
+    });
+  };
 
   return (
     <PhoneFrame header={<BrandHeader brand="Vitalis Core" />} bodyClassName="px-3 pb-8">
@@ -569,8 +1208,8 @@ function RegisterPage() {
         </p>
 
         <div className="mt-6 grid grid-cols-2 gap-3">
-          <SocialButton label="Google" />
-          <SocialButton label="Apple" />
+          <SocialButton label="Google" disabled detail="Coming Soon" />
+          <SocialButton label="Apple" disabled detail="Coming Soon" />
         </div>
 
         <div className="my-6 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
@@ -595,7 +1234,11 @@ function RegisterPage() {
               value={state.auth.registerDraft.code}
               onChange={(value) => actions.setRegisterField("code", value)}
               placeholder="6-digit code"
-              trailing={<span className="font-semibold text-[#1E40AF]">Send Code</span>}
+              trailing={
+                <button type="button" onClick={handleSendCode} className="font-semibold text-[#1E40AF]">
+                  Send Code
+                </button>
+              }
             />
           </div>
         </div>
@@ -619,9 +1262,19 @@ function RegisterPage() {
           </p>
         </div>
 
-        <RouteButton to="/profile-registration" className="mt-6" onClick={actions.register}>
+        <button
+          type="button"
+          onClick={handleRegister}
+          className="mt-6 inline-flex w-full items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+        >
           Join Vitalis →
-        </RouteButton>
+        </button>
+        {registerNotice ? (
+          <p className="mt-3 text-center text-xs font-semibold text-[#1E40AF]">{registerNotice}</p>
+        ) : null}
+        {sync.error ? (
+          <p className="mt-3 text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
+        ) : null}
         <p className="mt-6 text-center text-base text-slate-500">
           Already a member?{" "}
           <RouteLink to="/login" className="font-semibold text-[#1E40AF]">
@@ -634,7 +1287,17 @@ function RegisterPage() {
 }
 
 function LoginPage() {
-  const { state, actions } = useHealthStore();
+  const { state, sync, actions } = useHealthStore();
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+
+  const handleLogin = () => {
+    setLoginNotice(null);
+    void actions.login().then((loggedIn) => {
+      if (loggedIn) {
+        window.location.hash = "#/dashboard";
+      }
+    });
+  };
 
   return (
     <PhoneFrame header={<BrandHeader brand="Vitalis Core" />} bodyClassName="px-3 pb-6">
@@ -661,11 +1324,23 @@ function LoginPage() {
             trailing="◌"
           />
         </div>
-        <p className="mt-3 text-right text-sm font-semibold text-[#1E40AF]">Forgot Password?</p>
+        <button
+          type="button"
+          onClick={() => setLoginNotice("Password reset is not wired yet. Use the demo account for now.")}
+          className="mt-3 text-right text-sm font-semibold text-[#94a3b8]"
+        >
+          Forgot Password?
+        </button>
 
-        <RouteButton to="/dashboard" className="mt-6" onClick={actions.login}>
+        <button
+          type="button"
+          onClick={handleLogin}
+          className="mt-6 inline-flex w-full items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+        >
           Login
-        </RouteButton>
+        </button>
+        {loginNotice ? <p className="mt-3 text-center text-xs font-semibold text-slate-400">{loginNotice}</p> : null}
+        {sync.error ? <p className="mt-3 text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
 
         <div className="my-6 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
           <span className="h-px flex-1 bg-[#edf0f6]" />
@@ -674,8 +1349,8 @@ function LoginPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <SocialButton label="Google" />
-          <SocialButton label="Apple" />
+          <SocialButton label="Google" disabled detail="Coming Soon" />
+          <SocialButton label="Apple" disabled detail="Coming Soon" />
         </div>
 
         <p className="mt-7 text-center text-base text-slate-500">
@@ -700,14 +1375,174 @@ function LoginPage() {
   );
 }
 
+function MemberListPage() {
+  const { state, sync, actions } = useHealthStore();
+  const [deleteChecks, setDeleteChecks] = useState<Record<string, boolean>>({});
+
+  const handleCreateProfile = () => {
+    setProfileFormReturnPath("/member-list");
+    actions.beginCreateProfile();
+    window.location.hash = "#/profile-registration";
+  };
+
+  const handleEditProfile = (profileId: string) => {
+    setProfileFormReturnPath("/member-list");
+    actions.selectProfile(profileId);
+    window.location.hash = "#/profile-registration";
+  };
+
+  const handleDeleteProfile = (profileId: string) => {
+    if (!deleteChecks[profileId]) {
+      setDeleteChecks((current) => ({
+        ...current,
+        [profileId]: true,
+      }));
+      return;
+    }
+
+    void actions.deleteProfile(profileId).then((deleted) => {
+      if (deleted) {
+        setDeleteChecks((current) => {
+          const next = { ...current };
+          delete next[profileId];
+          return next;
+        });
+      }
+    });
+  };
+
+  return (
+    <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Member List" right={<AvatarBadge label={`${state.profiles.length}`} />} />}>
+      <div className="px-1">
+        <Label>HOUSEHOLD MANAGEMENT</Label>
+        <h2 className="mt-2 text-[2.2rem] font-semibold leading-[0.98] tracking-[-0.04em] text-slate-900">
+          Manage Family Members
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Add new members, update their profile details, and switch the active health record from one place.
+        </p>
+      </div>
+
+      <RouteButton to="/profile-registration" onClick={handleCreateProfile}>
+        Add New Member
+      </RouteButton>
+
+      <div className="space-y-3">
+        {state.profiles.map((profile) => {
+          const isActive = profile.id === state.activeProfileId;
+
+          return (
+            <Card key={profile.id}>
+              <div className="flex items-start gap-4">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#1E40AF] text-sm font-semibold text-white">
+                  {renderAvatarContent(profile.initials, profile.avatarUrl)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[1.05rem] font-semibold text-slate-900">{profile.name}</p>
+                      <p className="mt-1 truncate text-sm text-slate-500">{profile.relation}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => actions.selectProfile(profile.id)}
+                        aria-label={isActive ? `${profile.name} selected` : `Select ${profile.name}`}
+                        className={`flex h-9 w-9 items-center justify-center rounded-full border ${
+                          isActive
+                            ? "border-[#8bd6aa] bg-[#ecfff3] text-[#1aa35f]"
+                            : "border-[#cfd7e6] bg-[#eef2f7] text-slate-400"
+                        }`}
+                      >
+                        <span
+                          className={`flex h-5 w-5 items-center justify-center rounded-full border text-[11px] ${
+                            isActive
+                              ? "border-[#8bd6aa] bg-[#1aa35f] text-white"
+                              : "border-[#cfd7e6] bg-white text-transparent"
+                          }`}
+                        >
+                          ✓
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEditProfile(profile.id)}
+                        aria-label={`Edit ${profile.name}`}
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d9e4ff] bg-[#eef4ff] text-[#1E40AF]"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-4 w-4 fill-none stroke-current stroke-[1.8]">
+                          <path d="M4 13.5V16h2.5L14.6 7.9l-2.5-2.5L4 13.5Z" />
+                          <path d="M10.9 5.9 13.4 8.4" />
+                        </svg>
+                      </button>
+                      {state.profiles.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteProfile(profile.id)}
+                          aria-label={`Delete ${profile.name}`}
+                          className={`flex h-9 w-9 items-center justify-center rounded-full border ${
+                            deleteChecks[profile.id]
+                              ? "border-[#ffd6d6] bg-[#fff1f1] text-[#d92d20]"
+                              : "border-[#ffe3e3] bg-white text-[#d92d20]"
+                          }`}
+                        >
+                          <svg viewBox="0 0 20 20" className="h-4 w-4 fill-none stroke-current stroke-[1.8]">
+                            <path d="M5.5 6.5h9" />
+                            <path d="M8 4.5h4" />
+                            <path d="M7 6.5v8" />
+                            <path d="M10 6.5v8" />
+                            <path d="M13 6.5v8" />
+                            <path d="M6.5 6.5v9h7v-9" />
+                          </svg>
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-500">
+                    {profile.note?.trim() ? profile.note : "No clinical notes added yet."}
+                  </p>
+                  {deleteChecks[profile.id] ? (
+                    <label className="mt-3 flex items-center gap-3 rounded-[1rem] bg-[#fff7f7] px-3 py-3 text-sm text-[#d92d20]">
+                      <input
+                        type="checkbox"
+                        checked={deleteChecks[profile.id]}
+                        onChange={(event) =>
+                          setDeleteChecks((current) => ({
+                            ...current,
+                            [profile.id]: event.target.checked,
+                          }))
+                        }
+                      />
+                      Confirm delete for this member
+                    </label>
+                  ) : null}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {sync.error ? (
+        <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
+      ) : null}
+    </PhoneFrame>
+  );
+}
+
 function ProfilePage() {
-  const { derived, actions } = useHealthStore();
+  const { derived, sync, actions } = useHealthStore();
+
+  const handleLogout = () => {
+    actions.logout();
+    window.location.hash = "#/login";
+  };
 
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Profile" centered />}>
       <div className="flex flex-col items-center">
-        <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-[#2d4458] text-lg font-semibold text-white ring-4 ring-[#56d5b6] ring-offset-4 ring-offset-[#f9f9ff]">
-          {derived.currentProfile.initials}
+        <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full bg-[#2d4458] text-lg font-semibold text-white ring-4 ring-[#56d5b6] ring-offset-4 ring-offset-[#f9f9ff]">
+          {renderAvatarContent(derived.currentProfile.initials, derived.currentProfile.avatarUrl)}
           <div className="absolute -bottom-2 -right-1 flex h-9 w-9 items-center justify-center rounded-full bg-[#1E40AF] text-sm font-semibold text-white">
             ✓
           </div>
@@ -716,24 +1551,162 @@ function ProfilePage() {
           {derived.currentProfile.name} ({derived.currentProfile.relation})
         </h2>
         <p className="mt-2 text-sm text-slate-500">Member ID: {derived.currentProfile.memberId}</p>
-        <button className="mt-5 rounded-full bg-[#eef2fb] px-5 py-3 text-sm font-semibold text-[#1E40AF]">
-          ← Profile Switcher
-        </button>
+        <RouteLink
+          to="/member-list"
+          className="mt-5 rounded-full bg-[#eef2fb] px-5 py-3 text-sm font-semibold text-[#1E40AF]"
+        >
+          Open Member List
+        </RouteLink>
       </div>
 
       <ProfileMenuSections groups={profileMenu} />
 
       <button
         type="button"
-        onClick={actions.logout}
+        onClick={handleLogout}
         className="rounded-[1.2rem] bg-[#f8ecef] px-4 py-4 text-base font-semibold text-[#f04444]"
       >
         Sign Out
       </button>
+      {sync.error ? (
+        <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
+      ) : null}
       <RouteLink to="/screens" className="text-center text-[11px] uppercase tracking-[0.18em] text-slate-400">
         eALTE AI v2.4.0 • Established 2024
       </RouteLink>
       <BottomTabs active="/profile" items={inAppTabs} />
+    </PhoneFrame>
+  );
+}
+
+function ReportsArchivePage() {
+  const { derived, actions } = useHealthStore();
+  const [query, setQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "uploaded">("all");
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+
+  const filteredReports = [...derived.reportArchiveItems]
+    .filter((report) => {
+      const normalizedQuery = query.trim().toLowerCase();
+      const matchesQuery =
+        normalizedQuery === "" ||
+        report.title.toLowerCase().includes(normalizedQuery) ||
+        report.location.toLowerCase().includes(normalizedQuery) ||
+        report.examType.toLowerCase().includes(normalizedQuery);
+      const matchesSource =
+        sourceFilter === "all" ||
+        (sourceFilter === "manual" && report.sourceType === "manual") ||
+        (sourceFilter === "uploaded" && report.sourceType !== "manual");
+
+      return matchesQuery && matchesSource;
+    })
+    .sort((left, right) =>
+      sortOrder === "newest"
+        ? new Date(right.rawDate).getTime() - new Date(left.rawDate).getTime()
+        : new Date(left.rawDate).getTime() - new Date(right.rawDate).getTime(),
+    );
+
+  const groupedReports = filteredReports.reduce(
+    (groups, report) => {
+      const groupLabel = new Intl.DateTimeFormat("en-US", {
+        month: "long",
+        year: "numeric",
+      }).format(new Date(report.rawDate));
+      const existingGroup = groups.find((group) => group.label === groupLabel);
+
+      if (existingGroup) {
+        existingGroup.reports.push(report);
+      } else {
+        groups.push({ label: groupLabel, reports: [report] });
+      }
+
+      return groups;
+    },
+    [] as Array<{ label: string; reports: typeof filteredReports }>,
+  );
+
+  return (
+    <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Reports Archive" right={<AvatarBadge label={`${derived.reportArchiveItems.length}`} />} />}>
+      <div className="px-1">
+        <Label>LONGITUDINAL RECORDS</Label>
+        <h2 className="mt-2 text-[2.2rem] font-semibold leading-[0.98] tracking-[-0.04em] text-slate-900">
+          Full Report History
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Review every uploaded or manually entered report for the current member, then open any record to inspect details.
+        </p>
+      </div>
+
+      <Card className="bg-[#f4f7ff]">
+        <Label>SEARCH REPORTS</Label>
+        <TextInput value={query} onChange={setQuery} placeholder="Search by title, location, or exam type" />
+        <div className="mt-4 flex flex-wrap gap-2">
+          {[
+            { id: "all", label: "All Reports" },
+            { id: "uploaded", label: "Uploads" },
+            { id: "manual", label: "Manual" },
+          ].map((item) => {
+            const active = sourceFilter === item.id;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSourceFilter(item.id as "all" | "manual" | "uploaded")}
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                  active ? "bg-[#1E40AF] text-white" : "bg-white text-slate-500"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {[
+            { id: "newest", label: "Newest First" },
+            { id: "oldest", label: "Oldest First" },
+          ].map((item) => {
+            const active = sortOrder === item.id;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSortOrder(item.id as "newest" | "oldest")}
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                  active ? "bg-slate-900 text-white" : "bg-white text-slate-500"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <div className="space-y-5">
+        {groupedReports.map((group) => (
+          <section key={group.label}>
+            <div className="px-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{group.label}</p>
+            </div>
+            <div className="mt-2">
+              <ReportArchiveList reports={group.reports} onSelectReport={actions.selectReport} />
+            </div>
+          </section>
+        ))}
+      </div>
+
+      {filteredReports.length === 0 ? (
+        <Card className="bg-[#f4f7ff]">
+          <p className="text-sm leading-6 text-slate-500">
+            {derived.reportArchiveItems.length === 0
+              ? "No reports are available for this member yet. Use Analyze or Manual Entry from the dashboard to create the first record."
+              : "No reports match the current search or filter. Try broadening the criteria."}
+          </p>
+        </Card>
+      ) : null}
     </PhoneFrame>
   );
 }
@@ -776,6 +1749,12 @@ export const screenRoutes: RouteConfig[] = [
     element: <DashboardPage />,
   },
   {
+    path: "/report-upload",
+    title: "Upload Report",
+    description: "选择图片、拍照或文件",
+    element: <UploadReportPage />,
+  },
+  {
     path: "/scanning",
     title: "Scanning",
     description: "报告识别中",
@@ -786,6 +1765,12 @@ export const screenRoutes: RouteConfig[] = [
     title: "Report Analysis",
     description: "AI 识别结果",
     element: <ReportAnalysisPage />,
+  },
+  {
+    path: "/reports-archive",
+    title: "Reports Archive",
+    description: "报告历史归档",
+    element: <ReportsArchivePage />,
   },
   {
     path: "/manual-entry",
@@ -810,6 +1795,12 @@ export const screenRoutes: RouteConfig[] = [
     title: "Profile Registration",
     description: "患者信息登记",
     element: <ProfileRegistrationPage />,
+  },
+  {
+    path: "/member-list",
+    title: "Member List",
+    description: "家庭成员管理",
+    element: <MemberListPage />,
   },
   {
     path: "/register",

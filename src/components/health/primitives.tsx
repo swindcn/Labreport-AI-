@@ -94,18 +94,41 @@ export function SegmentedControl({
   );
 }
 
-export function ActionTile({ label, icon }: { label: string; icon: string }) {
+export function ActionTile({
+  label,
+  icon,
+  detail,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  detail?: string;
+  onClick?: () => void;
+}) {
   return (
-    <div className="rounded-[1.7rem] bg-white px-3 py-5 text-center shadow-[0_16px_40px_rgba(135,149,198,0.10)]">
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-[1.7rem] bg-white px-3 py-5 text-center shadow-[0_16px_40px_rgba(135,149,198,0.10)] transition-transform hover:-translate-y-0.5"
+    >
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#dbe7ff] text-sm font-semibold text-[#1E40AF]">
         {icon}
       </div>
       <p className="mt-4 text-base font-semibold text-slate-700">{label}</p>
-    </div>
+      {detail ? <p className="mt-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">{detail}</p> : null}
+    </button>
   );
 }
 
-export function ThumbTile({ tone }: { tone: "dark" | "blue" | "empty" }) {
+export function ThumbTile({
+  tone,
+  title,
+  detail,
+}: {
+  tone: "dark" | "blue" | "empty";
+  title?: string;
+  detail?: string;
+}) {
   const className =
     tone === "dark"
       ? "bg-[linear-gradient(160deg,_#31333a,_#17181d)]"
@@ -116,9 +139,16 @@ export function ThumbTile({ tone }: { tone: "dark" | "blue" | "empty" }) {
   return (
     <div className="rounded-[1.4rem] bg-white p-2 shadow-[0_14px_28px_rgba(135,149,198,0.10)]">
       <div className={`relative h-24 rounded-[1rem] ${className}`}>
-        <div className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#ff4545] text-[10px] font-semibold text-white">
-          ×
-        </div>
+        {title ? (
+          <div className="absolute inset-x-0 bottom-0 rounded-b-[1rem] bg-[linear-gradient(180deg,_transparent,_rgba(15,23,42,0.85))] px-3 pb-3 pt-8 text-left">
+            <p className="truncate text-sm font-semibold text-white">{title}</p>
+            {detail ? <p className="mt-1 truncate text-[11px] uppercase tracking-[0.12em] text-white/70">{detail}</p> : null}
+          </div>
+        ) : (
+          <div className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#ff4545] text-[10px] font-semibold text-white">
+            ×
+          </div>
+        )}
       </div>
     </div>
   );
@@ -223,10 +253,27 @@ export function InputField({ value }: { value: string }) {
   );
 }
 
-export function SocialButton({ label }: { label: string }) {
+export function SocialButton({
+  label,
+  disabled,
+  detail,
+}: {
+  label: string;
+  disabled?: boolean;
+  detail?: string;
+}) {
   return (
-    <button className="flex items-center justify-center rounded-[1rem] border border-[#e4e8f1] px-4 py-4 text-base font-semibold text-slate-700">
-      {label}
+    <button
+      type="button"
+      disabled={disabled}
+      className={`flex flex-col items-center justify-center rounded-[1rem] border px-4 py-4 text-base font-semibold ${
+        disabled
+          ? "cursor-not-allowed border-[#e8ebf4] bg-[#f8f9fc] text-slate-400"
+          : "border-[#e4e8f1] text-slate-700"
+      }`}
+    >
+      <span>{label}</span>
+      {detail ? <span className="mt-1 text-[11px] uppercase tracking-[0.14em]">{detail}</span> : null}
     </button>
   );
 }
@@ -254,6 +301,37 @@ export function TextInput({
         className="min-w-0 flex-1 bg-transparent text-base text-slate-700 outline-none placeholder:text-slate-400"
       />
       {trailing ? <div className="shrink-0 text-slate-400">{trailing}</div> : null}
+    </div>
+  );
+}
+
+export function SelectInput({
+  value,
+  onChange,
+  placeholder,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  options: string[];
+}) {
+  return (
+    <div className="mt-3 rounded-[1.2rem] bg-[#eef2fb] px-4 py-4">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`w-full bg-transparent text-base outline-none ${
+          value ? "text-slate-700" : "text-slate-400"
+        }`}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
