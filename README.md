@@ -10,6 +10,20 @@
 - 本地可运行的 API 适配层
 - 已验证通过的 `vite build`
 
+## 今日更新概要
+
+今天完成的核心更新：
+
+- 新增 `#/report-upload` 页面，支持 `Camera / Gallery / Files` 三种上传入口
+- 上传页补齐文件格式和大小校验，并提供页内错误提示
+- 扫描页改为自动推进进度并自动跳转分析页，不再需要手动点击继续
+- 补齐上传报告的真实状态流：创建 `processing` 报告、完成扫描、进入分析页
+- 新增扫描失败态与回退流程，区分 OCR 失败、文件损坏、网络失败三类场景
+- OCR 失败支持在扫描页直接重试，文件损坏支持返回上传页重新选文件
+- Reports Archive 支持按时间排序切换、按月份分组，并显示保存状态
+- Report Analysis 的 `Save Results` 已接成真实动作，可回写归档保存状态
+- 新增本地 Node API 的上传报告、完成扫描、重试扫描接口
+
 ## 运行
 
 要求：
@@ -56,8 +70,10 @@ npm run preview
 - `#/screens`：路由索引页
 - `#/home`：扫描入口首页
 - `#/dashboard`：报告上传与家庭档案主页
+- `#/report-upload`：选择报告图片、拍照或文件
 - `#/scanning`：报告识别中
 - `#/report-analysis`：AI 识别结果
+- `#/reports-archive`：报告历史归档
 - `#/manual-entry`：手动添加指标
 - `#/trends`：健康趋势分类页
 - `#/biomarker-trends`：生物标识物详情页
@@ -90,7 +106,9 @@ npm run preview
 4. dashboard 和 trends 根据 `activeProfileId` 联动切换。
 5. dashboard 的 `Recent Records` 可以直接点进单份报告分析页。
 6. 手动录入页提交后会生成新的 `Report`。
-7. 报告分析、趋势页、生物标识物详情页都从 `reports` 派生数据。
+7. 上传报告页会先创建 `processing` 状态的报告，再由扫描页自动推进并完成识别。
+8. 扫描失败时，store 会保留失败报告状态，并根据失败类型提供重试或重新上传回退流。
+9. 报告分析、趋势页、生物标识物详情页都从 `reports` 派生数据。
 
 其中持久化边界已经拆成两层：
 
@@ -124,6 +142,9 @@ API 抽象在 [src/lib/api/healthApi.ts](/Users/swindcn/Documents/New%20project/
 - `PATCH /profiles/:id`
 - `DELETE /profiles/:id`
 - `GET /reports`
+- `POST /reports`
+- `POST /reports/:id/complete`
+- `POST /reports/:id/retry`
 - `GET /reports/:id/results`
 - `POST /reports/manual`
 - `GET /users/me/preferences`
@@ -135,6 +156,7 @@ API 抽象在 [src/lib/api/healthApi.ts](/Users/swindcn/Documents/New%20project/
 - `profiles` 是家庭成员档案资源，按单个档案更新
 - `profiles` 现已支持新建和删除，删除时会同步清理该档案下的报告并回退当前选中档案
 - `reports` 是报告资源，现已支持按报告读取结果明细，并接入“手动录入生成报告”
+- `reports` 现已支持上传创建、完成识别、失败后重试
 - `preferences` 只保存用户级偏好，例如当前档案和当前报告
 - `profileDraft`、`scanSession`、`manualEntryDraft` 属于前端瞬时状态，不进入远端 API
 
@@ -155,6 +177,9 @@ API 抽象在 [src/lib/api/healthApi.ts](/Users/swindcn/Documents/New%20project/
 - `PATCH /api/profiles/:id`
 - `DELETE /api/profiles/:id`
 - `GET /api/reports`
+- `POST /api/reports`
+- `POST /api/reports/:id/complete`
+- `POST /api/reports/:id/retry`
 - `GET /api/reports/:id/results`
 - `POST /api/reports/manual`
 - `GET /api/users/me/preferences`
