@@ -36,6 +36,7 @@ export type ReportArchiveItem = {
   status: string;
   aiAccuracy: string;
   savedAt?: string;
+  isFavorite?: boolean;
   tone: Tone;
 };
 
@@ -212,45 +213,105 @@ export function RecentRecordsSection({
 export function ReportArchiveList({
   reports,
   onSelectReport,
+  selectionEnabled,
+  selectedReportIds,
+  onToggleSelectReport,
 }: {
   reports: ReportArchiveItem[];
   onSelectReport?: (reportId: string) => void;
+  selectionEnabled?: boolean;
+  selectedReportIds?: string[];
+  onToggleSelectReport?: (reportId: string) => void;
 }) {
   return (
     <div className="space-y-3">
       {reports.map((report) => (
-        <RouteLink
-          key={report.id}
-          to={report.status === "READY" ? "/report-analysis" : "/scanning"}
-          className="block"
-          onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
-        >
-          <Card>
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-slate-900">{report.title}</p>
-                  <p className="mt-1 truncate text-sm text-slate-500">
-                    {report.date} • {report.location}
-                  </p>
-                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                    {report.examType} • {report.sourceType}
-                  </p>
-                  {report.savedAt ? (
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
-                      Saved {report.savedAt}
+        selectionEnabled ? (
+          <button
+            key={report.id}
+            type="button"
+            onClick={() => onToggleSelectReport?.(report.id)}
+            className="block w-full text-left"
+          >
+            <Card>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900">{report.title}</p>
+                    <p className="mt-1 truncate text-sm text-slate-500">
+                      {report.date} • {report.location}
                     </p>
-                  ) : null}
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                      {report.examType} • {report.sourceType}
+                    </p>
+                    {report.isFavorite ? (
+                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#cc8a00]">
+                        Favorite Report
+                      </p>
+                    ) : null}
+                    {report.savedAt ? (
+                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
+                        Saved {report.savedAt}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <Chip label={report.status} tone={report.tone} />
+                  <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+                  <div
+                    className={`flex h-6 w-6 items-center justify-center rounded-md border text-xs font-semibold ${
+                      selectedReportIds?.includes(report.id)
+                        ? "border-[#1E40AF] bg-[#1E40AF] text-white"
+                        : "border-[#cbd5e1] bg-white text-slate-400"
+                    }`}
+                  >
+                    ✓
+                  </div>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <Chip label={report.status} tone={report.tone} />
-                <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+            </Card>
+          </button>
+        ) : (
+          <RouteLink
+            key={report.id}
+            to={report.status === "READY" ? "/report-analysis" : "/scanning"}
+            className="block"
+            onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
+          >
+            <Card>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900">{report.title}</p>
+                    <p className="mt-1 truncate text-sm text-slate-500">
+                      {report.date} • {report.location}
+                    </p>
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                      {report.examType} • {report.sourceType}
+                    </p>
+                    {report.isFavorite ? (
+                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#cc8a00]">
+                        Favorite Report
+                      </p>
+                    ) : null}
+                    {report.savedAt ? (
+                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
+                        Saved {report.savedAt}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <Chip label={report.status} tone={report.tone} />
+                  <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+                </div>
               </div>
-            </div>
-          </Card>
-        </RouteLink>
+            </Card>
+          </RouteLink>
+        )
       ))}
     </div>
   );

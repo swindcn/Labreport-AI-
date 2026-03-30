@@ -4,6 +4,7 @@ import type {
   CreateProfileInput,
   CreateManualReportInput,
   CreateUploadedReportInput,
+  DeleteReportResult,
   DeleteProfileResult,
   HealthAppState,
   HealthClientState,
@@ -12,6 +13,7 @@ import type {
   Profile,
   Report,
   ScanScenario,
+  UpdateReportInput,
 } from "@/lib/healthDomain";
 
 const LEGACY_STORAGE_KEY = "vitalis-core-state-v1";
@@ -50,6 +52,8 @@ export type HealthApi = {
   reports: {
     createManual: (input: CreateManualReportInput) => Promise<Report>;
     createUploaded: (input: CreateUploadedReportInput) => Promise<Report>;
+    update: (reportId: string, patch: UpdateReportInput) => Promise<Report>;
+    delete: (reportId: string) => Promise<DeleteReportResult>;
     completeScan: (reportId: string) => Promise<Report>;
     retryScan: (reportId: string) => Promise<Report>;
     getResults: (reportId: string) => Promise<BiomarkerResult[]>;
@@ -146,6 +150,7 @@ function createManualReport(input: CreateManualReportInput): Report {
     examType: input.examType,
     aiAccuracy: 100,
     results: input.results,
+    isFavorite: false,
   };
 }
 
@@ -274,8 +279,15 @@ function createUploadedReport(input: CreateUploadedReportInput): Report {
     examType: input.examType,
     aiAccuracy: input.sourceType === "pdf" ? 98.9 : 97.6,
     results: createSimulatedScanResults(input.examType),
+    isFavorite: false,
     scanScenario,
   };
+}
+
+function getLatestReportIdForProfile(reports: Report[], profileId: string) {
+  return [...reports]
+    .filter((report) => report.profileId === profileId)
+    .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())[0]?.id ?? null;
 }
 
 function createLocalHealthApi(): HealthApi {
@@ -483,6 +495,55 @@ function createLocalHealthApi(): HealthApi {
         writeLocalResource(STORAGE_KEYS.reports, [report, ...reports]);
 
         return report;
+      },
+      async update(reportId, patch) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const updatedReport = {
+          ...existingReport,
+          ...patch,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
+      },
+      async delete(reportId) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const nextReports = reports.filter((report) => report.id !== reportId);
+        const currentPreferences = (await readPreferences()) ?? {
+          activeProfileId: existingReport.profileId,
+          selectedReportId: reportId,
+        };
+        const nextSelectedReportId =
+          currentPreferences.selectedReportId === reportId
+            ? getLatestReportIdForProfile(nextReports, existingReport.profileId)
+            : currentPreferences.selectedReportId;
+
+        writeLocalResource(STORAGE_KEYS.reports, nextReports);
+        writeLocalResource(STORAGE_KEYS.preferences, {
+          ...currentPreferences,
+          selectedReportId: nextSelectedReportId,
+        } satisfies HealthPreferences);
+
+        return {
+          deletedReportId: reportId,
+          selectedReportId: nextSelectedReportId,
+        };
       },
       async completeScan(reportId) {
         const reports = (await readReports()) ?? [];
@@ -767,6 +828,32 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
         }
 
         return report;
+      },
+      async update(reportId, patch) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}`), {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(patch),
+        });
+
+        if (!report) {
+          throw new Error(`Report ${reportId} update returned empty response`);
+        }
+
+        return report;
+      },
+      async delete(reportId) {
+        const payload = await requestJson<DeleteReportResult>(resourceUrl(`/reports/${encodeURIComponent(reportId)}`), {
+          method: "DELETE",
+        });
+
+        if (!payload) {
+          throw new Error(`Report ${reportId} deletion returned empty response`);
+        }
+
+        return payload;
       },
       async createUploaded(input) {
         const report = await requestJson<Report>(resourceUrl("/reports"), {

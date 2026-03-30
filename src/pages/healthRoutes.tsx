@@ -118,6 +118,17 @@ function formatReportAnalysisMeta(date: string, location: string) {
   }).format(new Date(date))} • ${location}`;
 }
 
+function downloadTextFile(fileName: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 type UploadSourceKind = "camera" | "gallery" | "files";
 
 type PendingUploadSelection = {
@@ -126,6 +137,11 @@ type PendingUploadSelection = {
   fileName: string;
   fileSizeLabel: string;
   previewUrl: string | null;
+};
+
+type ArchiveNotice = {
+  tone: "success" | "warning";
+  message: string;
 };
 
 const MAX_IMAGE_FILE_SIZE_BYTES = 12 * 1024 * 1024;
@@ -794,6 +810,61 @@ function ReportAnalysisPage() {
     });
   };
 
+  const handleToggleFavorite = () => {
+    if (!selectedReport) {
+      return;
+    }
+
+    void actions.updateSelectedReport({
+      isFavorite: !selectedReport.isFavorite,
+    });
+  };
+
+  const handleExportResults = () => {
+    if (!selectedReport) {
+      return;
+    }
+
+    const payload = JSON.stringify(
+      {
+        report: {
+          id: selectedReport.id,
+          title: selectedReport.title,
+          date: selectedReport.date,
+          location: selectedReport.location,
+          status: selectedReport.status,
+          examType: selectedReport.examType,
+          sourceType: selectedReport.sourceType,
+          aiAccuracy: selectedReport.aiAccuracy,
+          isFavorite: selectedReport.isFavorite ?? false,
+        },
+        results: selectedReport.results,
+      },
+      null,
+      2,
+    );
+
+    downloadTextFile(`${selectedReport.title.replace(/\s+/g, "-").toLowerCase() || "report"}.json`, payload, "application/json");
+  };
+
+  const handleDeleteReport = () => {
+    if (!selectedReport) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete "${selectedReport.title}" from this member's report archive?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    void actions.deleteSelectedReport().then((deleted) => {
+      if (deleted) {
+        window.location.hash = "#/reports-archive";
+      }
+    });
+  };
+
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Health Report" right="↗" />}>
       <div className="px-1">
@@ -849,6 +920,32 @@ function ReportAnalysisPage() {
           />
         </div>
       </section>
+
+      <div className="grid grid-cols-3 gap-3">
+        <button
+          type="button"
+          onClick={handleToggleFavorite}
+          className={`rounded-[1.2rem] px-3 py-3 text-sm font-semibold ${
+            selectedReport?.isFavorite ? "bg-[#fff8ec] text-[#cc8a00]" : "bg-white text-slate-600"
+          } shadow-[0_14px_28px_rgba(135,149,198,0.10)]`}
+        >
+          {selectedReport?.isFavorite ? "Favorited" : "Favorite"}
+        </button>
+        <button
+          type="button"
+          onClick={handleExportResults}
+          className="rounded-[1.2rem] bg-white px-3 py-3 text-sm font-semibold text-slate-600 shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+        >
+          Export JSON
+        </button>
+        <button
+          type="button"
+          onClick={handleDeleteReport}
+          className="rounded-[1.2rem] bg-[#fff1f1] px-3 py-3 text-sm font-semibold text-[#d92d20] shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+        >
+          Delete
+        </button>
+      </div>
 
       <button
         type="button"
@@ -1580,10 +1677,14 @@ function ProfilePage() {
 }
 
 function ReportsArchivePage() {
-  const { derived, actions } = useHealthStore();
+  const { derived, actions, sync } = useHealthStore();
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "uploaded">("all");
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "processing" | "failed" | "favorites">("all");
+  const [manageFailedMode, setManageFailedMode] = useState(false);
+  const [selectedFailedIds, setSelectedFailedIds] = useState<string[]>([]);
+  const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState<ArchiveNotice | null>(null);
 
   const filteredReports = [...derived.reportArchiveItems]
     .filter((report) => {
@@ -1597,14 +1698,16 @@ function ReportsArchivePage() {
         sourceFilter === "all" ||
         (sourceFilter === "manual" && report.sourceType === "manual") ||
         (sourceFilter === "uploaded" && report.sourceType !== "manual");
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "ready" && report.status === "READY") ||
+        (statusFilter === "processing" && report.status === "PROCESSING") ||
+        (statusFilter === "failed" && report.status === "FAILED") ||
+        (statusFilter === "favorites" && report.isFavorite);
 
-      return matchesQuery && matchesSource;
+      return matchesQuery && matchesSource && matchesStatus;
     })
-    .sort((left, right) =>
-      sortOrder === "newest"
-        ? new Date(right.rawDate).getTime() - new Date(left.rawDate).getTime()
-        : new Date(left.rawDate).getTime() - new Date(right.rawDate).getTime(),
-    );
+    .sort((left, right) => new Date(right.rawDate).getTime() - new Date(left.rawDate).getTime());
 
   const groupedReports = filteredReports.reduce(
     (groups, report) => {
@@ -1624,6 +1727,100 @@ function ReportsArchivePage() {
     },
     [] as Array<{ label: string; reports: typeof filteredReports }>,
   );
+  const failedReports = filteredReports.filter((report) => report.status === "FAILED");
+
+  useEffect(() => {
+    setSelectedFailedIds((current) => current.filter((reportId) => failedReports.some((report) => report.id === reportId)));
+  }, [failedReports]);
+
+  useEffect(() => {
+    if (statusFilter !== "failed") {
+      setManageFailedMode(false);
+      setSelectedFailedIds([]);
+    }
+  }, [statusFilter]);
+
+  useEffect(() => {
+    setArchiveNotice(null);
+  }, [query, sourceFilter, statusFilter]);
+
+  const handleToggleFailedSelection = (reportId: string) => {
+    setSelectedFailedIds((current) =>
+      current.includes(reportId) ? current.filter((id) => id !== reportId) : [...current, reportId],
+    );
+  };
+
+  const handleSelectAllFailed = () => {
+    setSelectedFailedIds(failedReports.map((report) => report.id));
+  };
+
+  const handleClearFailedSelection = () => {
+    setSelectedFailedIds([]);
+  };
+
+  const handleBulkRetryFailed = () => {
+    if (selectedFailedIds.length === 0 || isBulkSubmitting) {
+      return;
+    }
+
+    setIsBulkSubmitting(true);
+    void Promise.all(selectedFailedIds.map((reportId) => actions.retryReport(reportId)))
+      .then((results) => {
+        const successCount = results.filter(Boolean).length;
+        const failureCount = results.length - successCount;
+
+        if (successCount > 0) {
+          setArchiveNotice({
+            tone: failureCount === 0 ? "success" : "warning",
+            message:
+              failureCount === 0
+                ? `${successCount} failed report${successCount > 1 ? "s" : ""} moved back to processing.`
+                : `${successCount} report${successCount > 1 ? "s" : ""} retried, ${failureCount} failed to retry.`,
+          });
+        }
+
+        setSelectedFailedIds([]);
+        setManageFailedMode(false);
+      })
+      .finally(() => {
+        setIsBulkSubmitting(false);
+      });
+  };
+
+  const handleBulkDeleteFailed = () => {
+    if (selectedFailedIds.length === 0 || isBulkSubmitting) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${selectedFailedIds.length} failed report(s) from the archive?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBulkSubmitting(true);
+    void Promise.all(selectedFailedIds.map((reportId) => actions.deleteReport(reportId)))
+      .then((results) => {
+        const successCount = results.filter(Boolean).length;
+        const failureCount = results.length - successCount;
+
+        if (successCount > 0) {
+          setArchiveNotice({
+            tone: failureCount === 0 ? "success" : "warning",
+            message:
+              failureCount === 0
+                ? `${successCount} failed report${successCount > 1 ? "s" : ""} removed from the archive.`
+                : `${successCount} report${successCount > 1 ? "s" : ""} deleted, ${failureCount} failed to delete.`,
+          });
+        }
+
+        setSelectedFailedIds([]);
+        setManageFailedMode(false);
+      })
+      .finally(() => {
+        setIsBulkSubmitting(false);
+      });
+  };
 
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Reports Archive" right={<AvatarBadge label={`${derived.reportArchiveItems.length}`} />} />}>
@@ -1664,18 +1861,21 @@ function ReportsArchivePage() {
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {[
-            { id: "newest", label: "Newest First" },
-            { id: "oldest", label: "Oldest First" },
+            { id: "all", label: "All Status" },
+            { id: "ready", label: "Ready" },
+            { id: "processing", label: "Processing" },
+            { id: "failed", label: "Failed" },
+            { id: "favorites", label: "Favorites" },
           ].map((item) => {
-            const active = sortOrder === item.id;
+            const active = statusFilter === item.id;
 
             return (
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSortOrder(item.id as "newest" | "oldest")}
+                onClick={() => setStatusFilter(item.id as "all" | "ready" | "processing" | "failed" | "favorites")}
                 className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                  active ? "bg-slate-900 text-white" : "bg-white text-slate-500"
+                  active ? "bg-[#cc8a00] text-white" : "bg-white text-slate-500"
                 }`}
               >
                 {item.label}
@@ -1685,6 +1885,83 @@ function ReportsArchivePage() {
         </div>
       </Card>
 
+      {statusFilter === "failed" ? (
+        <Card className="bg-[#fff4f3]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Label>FAILED REPORTS</Label>
+              <span className="text-sm font-semibold text-slate-900">{failedReports.length}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setManageFailedMode((current) => !current);
+                setSelectedFailedIds([]);
+              }}
+              className={`inline-flex shrink-0 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold leading-none ${
+                manageFailedMode ? "bg-[#d92d20] text-white" : "bg-white text-[#d92d20]"
+              }`}
+            >
+              {manageFailedMode ? "Stop" : "Manage"}
+            </button>
+          </div>
+          <p className="mt-2 text-lg font-semibold text-slate-900">Failed reports require cleanup</p>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Switch on batch management to select multiple failed records, retry OCR in bulk, or remove them from the archive.
+          </p>
+          {manageFailedMode ? (
+            <div className="mt-4 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllFailed}
+                  className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearFailedSelection}
+                  className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={handleBulkRetryFailed}
+                  disabled={selectedFailedIds.length === 0 || isBulkSubmitting}
+                  className={`rounded-[1.2rem] px-4 py-4 text-sm font-semibold ${
+                    selectedFailedIds.length > 0 && !isBulkSubmitting ? "bg-[#1E40AF] text-white" : "bg-[#d9dfef] text-slate-500"
+                  }`}
+                >
+                  {isBulkSubmitting ? "Working..." : `Retry Selected (${selectedFailedIds.length})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteFailed}
+                  disabled={selectedFailedIds.length === 0 || isBulkSubmitting}
+                  className={`rounded-[1.2rem] px-4 py-4 text-sm font-semibold ${
+                    selectedFailedIds.length > 0 && !isBulkSubmitting ? "bg-[#d92d20] text-white" : "bg-[#f3d6d4] text-[#b78480]"
+                  }`}
+                >
+                  {isBulkSubmitting ? "Working..." : `Delete Selected (${selectedFailedIds.length})`}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {archiveNotice ? (
+        <Card className={archiveNotice.tone === "success" ? "bg-[#eefbf3]" : "bg-[#fff8ec]"}>
+          <p className={`text-sm font-semibold ${archiveNotice.tone === "success" ? "text-[#1b7f4d]" : "text-[#9a6700]"}`}>
+            {archiveNotice.message}
+          </p>
+        </Card>
+      ) : null}
+
       <div className="space-y-5">
         {groupedReports.map((group) => (
           <section key={group.label}>
@@ -1692,7 +1969,13 @@ function ReportsArchivePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{group.label}</p>
             </div>
             <div className="mt-2">
-              <ReportArchiveList reports={group.reports} onSelectReport={actions.selectReport} />
+              <ReportArchiveList
+                reports={group.reports}
+                onSelectReport={actions.selectReport}
+                selectionEnabled={manageFailedMode}
+                selectedReportIds={selectedFailedIds}
+                onToggleSelectReport={handleToggleFailedSelection}
+              />
             </div>
           </section>
         ))}
@@ -1703,10 +1986,15 @@ function ReportsArchivePage() {
           <p className="text-sm leading-6 text-slate-500">
             {derived.reportArchiveItems.length === 0
               ? "No reports are available for this member yet. Use Analyze or Manual Entry from the dashboard to create the first record."
-              : "No reports match the current search or filter. Try broadening the criteria."}
+              : statusFilter === "failed"
+                ? "No failed reports remain for the current filters. New OCR failures will appear here for retry or cleanup."
+                : statusFilter === "favorites"
+                  ? "No favorite reports match the current filters yet."
+                  : "No reports match the current search or filter. Try broadening the criteria."}
           </p>
         </Card>
       ) : null}
+      {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
     </PhoneFrame>
   );
 }

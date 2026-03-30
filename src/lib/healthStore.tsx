@@ -25,6 +25,7 @@ import type {
   CreateProfileInput,
   CreateManualReportInput,
   CreateUploadedReportInput,
+  DeleteReportResult,
   DeleteProfileResult,
   ExamType,
   HealthAppState,
@@ -36,6 +37,7 @@ import type {
   ProfileDraftState,
   Report,
   SceneType,
+  UpdateReportInput,
 } from "@/lib/healthDomain";
 
 type Action =
@@ -57,6 +59,8 @@ type Action =
   | { type: "reports/createUploadedSuccess"; report: Report }
   | { type: "scan/completeSuccess"; report: Report }
   | { type: "scan/retrySuccess"; report: Report }
+  | { type: "reports/updateSuccess"; report: Report }
+  | { type: "reports/deleteSuccess"; payload: DeleteReportResult }
   | { type: "reports/save"; reportId: string; savedAt: string }
   | { type: "reports/select"; reportId: string }
   | { type: "reports/resultsLoaded"; reportId: string; results: BiomarkerResult[] }
@@ -543,6 +547,21 @@ function reducer(state: HealthAppState, action: Action): HealthAppState {
           progress: 12,
         },
       };
+    case "reports/updateSuccess":
+      return {
+        ...state,
+        reports: state.reports.map((report) => (report.id === action.report.id ? action.report : report)),
+      };
+    case "reports/deleteSuccess":
+      const nextReportSavedAt = { ...state.reportSavedAt };
+      delete nextReportSavedAt[action.payload.deletedReportId];
+
+      return {
+        ...state,
+        reports: state.reports.filter((report) => report.id !== action.payload.deletedReportId),
+        selectedReportId: action.payload.selectedReportId,
+        reportSavedAt: nextReportSavedAt,
+      };
     case "reports/save":
       return {
         ...state,
@@ -824,6 +843,7 @@ function deriveStoreData(state: HealthAppState) {
     status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
     aiAccuracy: `${report.aiAccuracy.toFixed(1)}%`,
     savedAt: state.reportSavedAt[report.id],
+    isFavorite: report.isFavorite ?? false,
     tone:
       report.status === "failed"
         ? "danger"
@@ -958,10 +978,15 @@ type HealthStoreValue = {
     setProfileDraftField: (field: keyof ProfileDraft, value: string) => void;
     saveProfile: () => Promise<boolean>;
     saveSelectedReport: () => Promise<boolean>;
+    updateReport: (reportId: string, patch: UpdateReportInput) => Promise<boolean>;
+    updateSelectedReport: (patch: UpdateReportInput) => Promise<boolean>;
+    deleteReport: (reportId: string) => Promise<boolean>;
+    deleteSelectedReport: () => Promise<boolean>;
     setScanExamType: (examType: ExamType) => void;
     setScanProgress: (progress: number) => void;
     startScan: () => void;
     createUploadedReport: (input: Pick<CreateUploadedReportInput, "fileName" | "sourceType">) => Promise<boolean>;
+    retryReport: (reportId: string) => Promise<boolean>;
     completeScan: () => Promise<Report | null>;
     retrySelectedScan: () => Promise<boolean>;
     selectReport: (reportId: string) => void;
@@ -1067,6 +1092,55 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
         return true;
       } catch (error: unknown) {
         setSyncError(error instanceof Error ? error.message : "Failed to delete profile");
+        return false;
+      }
+    };
+    const updateReport = async (reportId: string, patch: UpdateReportInput) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.update(reportId, patch);
+        dispatch({ type: "reports/updateSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to update report");
+        return false;
+      }
+    };
+    const deleteReport = async (reportId: string) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const payload = await api.reports.delete(reportId);
+        dispatch({ type: "reports/deleteSuccess", payload });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to delete report");
+        return false;
+      }
+    };
+    const retryReport = async (reportId: string) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.retryScan(reportId);
+        if (reportId === state.selectedReportId) {
+          dispatch({ type: "scan/retrySuccess", report });
+        } else {
+          dispatch({ type: "reports/updateSuccess", report });
+        }
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to retry scan");
         return false;
       }
     };
@@ -1212,6 +1286,24 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
             return false;
           }
         },
+        updateReport,
+        updateSelectedReport: async (patch) => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          return updateReport(state.selectedReportId, patch);
+        },
+        deleteReport,
+        deleteSelectedReport: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          return deleteReport(state.selectedReportId);
+        },
         setScanExamType: (examType) => dispatch({ type: "scan/setExamType", examType }),
         setScanProgress: (progress) => dispatch({ type: "scan/setProgress", progress }),
         startScan: () => dispatch({ type: "scan/start" }),
@@ -1242,21 +1334,14 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
             return null;
           }
         },
+        retryReport,
         retrySelectedScan: async () => {
           if (!state.selectedReportId) {
             setSyncError("No report is selected.");
             return false;
           }
 
-          try {
-            const report = await api.reports.retryScan(state.selectedReportId);
-            dispatch({ type: "scan/retrySuccess", report });
-            setSyncError(null);
-            return true;
-          } catch (error: unknown) {
-            setSyncError(error instanceof Error ? error.message : "Failed to retry scan");
-            return false;
-          }
+          return retryReport(state.selectedReportId);
         },
         selectReport: (reportId) => dispatch({ type: "reports/select", reportId }),
         loadReportResults: async (reportId) => {

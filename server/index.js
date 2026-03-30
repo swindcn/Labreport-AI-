@@ -332,6 +332,18 @@ function getSelectionAfterDelete(db, userId, deletedProfileId) {
   }
 }
 
+function getSelectionAfterReportDelete(db, userId, deletedReportId) {
+  const currentPreferences = getPreferencesForUser(db, userId)
+
+  if (currentPreferences.selectedReportId && currentPreferences.selectedReportId !== deletedReportId) {
+    return currentPreferences.selectedReportId
+  }
+
+  return db.reports
+    .filter((report) => report.profileId === currentPreferences.activeProfileId)
+    .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())[0]?.id ?? null
+}
+
 async function handleLogin(request, response, corsHeaders, db) {
   const body = await readBody(request)
   const user = db.users.find((item) => item.email === body.email && item.password === body.password)
@@ -621,6 +633,7 @@ async function requestListener(request, response) {
         examType: body.examType ?? "Routine",
         aiAccuracy: sourceType === "pdf" ? 98.9 : 97.6,
         results: createSimulatedScanResults(body.examType ?? "Routine"),
+        isFavorite: false,
         scanScenario: inferScanScenario(fileName),
       }
 
@@ -633,6 +646,62 @@ async function requestListener(request, response) {
       }
       await saveDb(db)
       json(response, 201, report, corsHeaders)
+      return
+    }
+
+    if (request.method === "PATCH" && pathname.startsWith("/reports/") && !pathname.endsWith("/complete") && !pathname.endsWith("/retry") && !pathname.endsWith("/results")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = decodeURIComponent(pathname.slice("/reports/".length))
+      const report = findOwnedReport(db, currentUserId, reportId)
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+      const allowedPatch = {
+        title: body.title ?? report.title,
+        location: body.location ?? report.location,
+        isFavorite: body.isFavorite ?? report.isFavorite ?? false,
+      }
+
+      Object.assign(report, allowedPatch)
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (request.method === "DELETE" && pathname.startsWith("/reports/") && !pathname.endsWith("/complete") && !pathname.endsWith("/retry") && !pathname.endsWith("/results")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = decodeURIComponent(pathname.slice("/reports/".length))
+      const report = findOwnedReport(db, currentUserId, reportId)
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      db.reports = db.reports.filter((item) => item.id !== reportId)
+      const currentPreferences = getPreferencesForUser(db, currentUserId)
+      const nextSelectedReportId = getSelectionAfterReportDelete(db, currentUserId, reportId)
+      db.preferencesByUserId[currentUserId] = {
+        ...currentPreferences,
+        selectedReportId: nextSelectedReportId,
+      }
+      await saveDb(db)
+      json(response, 200, {
+        deletedReportId: reportId,
+        selectedReportId: nextSelectedReportId,
+      }, corsHeaders)
       return
     }
 
@@ -749,6 +818,7 @@ async function requestListener(request, response) {
         examType: body.examType ?? "Routine",
         aiAccuracy: 100,
         results: Array.isArray(body.results) ? body.results : [],
+        isFavorite: false,
       }
 
       db.reports.unshift(report)

@@ -45,6 +45,120 @@
   ],
   "reports": [
     {
+      "id": "report_failed_ocr_seed_001",
+      "profileId": "profile_me",
+      "title": "blurry-lab-slip",
+      "date": "2026-03-30T13:20:00.000Z",
+      "location": "Mobile Upload",
+      "sceneType": "ROUTINE",
+      "sourceType": "image",
+      "status": "failed",
+      "examType": "Routine",
+      "aiAccuracy": 91.4,
+      "results": [
+        {
+          "id": "seed_hgb_fail_001",
+          "code": "HGB",
+          "name": "Hemoglobin",
+          "category": "Blood Count",
+          "value": 13.8,
+          "unit": "g/dL",
+          "referenceText": "Ref 13.5 - 17.5 g/dL",
+          "status": "normal"
+        },
+        {
+          "id": "seed_glu_fail_001",
+          "code": "GLU",
+          "name": "Glucose",
+          "category": "Metabolic",
+          "value": 106,
+          "unit": "mg/dL",
+          "referenceText": "Ref 70 - 99 mg/dL",
+          "status": "high"
+        }
+      ],
+      "isFavorite": false,
+      "scanScenario": "ocr_retryable",
+      "scanFailureCode": "ocr_failed",
+      "scanFailureMessage": "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file."
+    },
+    {
+      "id": "report_failed_file_seed_001",
+      "profileId": "profile_me",
+      "title": "corrupt-chemistry-panel",
+      "date": "2026-03-30T11:42:00.000Z",
+      "location": "Files Import",
+      "sceneType": "ROUTINE",
+      "sourceType": "pdf",
+      "status": "failed",
+      "examType": "Clinical",
+      "aiAccuracy": 88.2,
+      "results": [
+        {
+          "id": "seed_alt_fail_001",
+          "code": "ALT",
+          "name": "ALT (Alanine Aminotransferase)",
+          "category": "Liver Function",
+          "value": 41,
+          "unit": "U/L",
+          "referenceText": "Ref < 40 U/L",
+          "status": "high"
+        },
+        {
+          "id": "seed_cre_fail_001",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 1.05,
+          "unit": "mg/dL",
+          "referenceText": "Ref 0.7 - 1.3 mg/dL",
+          "status": "normal"
+        }
+      ],
+      "isFavorite": false,
+      "scanScenario": "file_invalid",
+      "scanFailureCode": "file_invalid",
+      "scanFailureMessage": "The selected file appears damaged or unsupported. Please upload a cleaner report file."
+    },
+    {
+      "id": "report_failed_ocr_seed_002",
+      "profileId": "profile_me",
+      "title": "tilted-cbc-ocr",
+      "date": "2026-03-29T16:05:00.000Z",
+      "location": "Mobile Upload",
+      "sceneType": "ROUTINE",
+      "sourceType": "image",
+      "status": "failed",
+      "examType": "Routine",
+      "aiAccuracy": 89.7,
+      "results": [
+        {
+          "id": "seed_wbc_fail_002",
+          "code": "WBC",
+          "name": "White Blood Cells",
+          "category": "Blood Count",
+          "value": 6.5,
+          "unit": "10^9/L",
+          "referenceText": "Ref 4.0 - 11.0 10^9/L",
+          "status": "normal"
+        },
+        {
+          "id": "seed_bun_fail_002",
+          "code": "BUN",
+          "name": "Blood Urea Nitrogen",
+          "category": "Kidney Function",
+          "value": 15,
+          "unit": "mg/dL",
+          "referenceText": "Ref 7 - 20 mg/dL",
+          "status": "normal"
+        }
+      ],
+      "isFavorite": true,
+      "scanScenario": "ocr_retryable",
+      "scanFailureCode": "ocr_failed",
+      "scanFailureMessage": "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file."
+    },
+    {
       "id": "report_1",
       "profileId": "profile_me",
       "title": "Full Blood Count",

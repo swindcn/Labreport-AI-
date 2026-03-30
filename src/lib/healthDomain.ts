@@ -85,6 +85,7 @@ export type Report = {
   examType: ExamType;
   aiAccuracy: number;
   results: BiomarkerResult[];
+  isFavorite?: boolean;
   scanScenario?: ScanScenario;
   scanFailureCode?: ScanFailureCode;
   scanFailureMessage?: string;
@@ -129,6 +130,8 @@ export type CreateUploadedReportInput = {
   sourceType: Exclude<SourceType, "manual">;
 };
 
+export type UpdateReportInput = Partial<Pick<Report, "title" | "location" | "isFavorite">>;
+
 export type CreateProfileInput = {
   name: string;
   relation: string;
@@ -141,6 +144,11 @@ export type CreateProfileInput = {
 export type DeleteProfileResult = {
   deletedProfileId: string;
   activeProfileId: string;
+  selectedReportId: string | null;
+};
+
+export type DeleteReportResult = {
+  deletedReportId: string;
   selectedReportId: string | null;
 };
 
