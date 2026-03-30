@@ -18,6 +18,7 @@ import type {
 } from "@/components/health/sections";
 import { createHealthApi } from "@/lib/api/healthApi";
 import { createManualPanelValues, getManualBiomarkersForPanel, profileRelationOptions } from "@/lib/healthData";
+import { getReportVersionState } from "@/lib/reportVersionState";
 import type {
   AuthDraft,
   BiomarkerResult,
@@ -751,13 +752,16 @@ function createManualReportInput(state: HealthAppState): CreateManualReportInput
 
 function createUploadedReportInput(
   state: HealthAppState,
-  input: Pick<CreateUploadedReportInput, "fileName" | "sourceType">,
+  input: Pick<CreateUploadedReportInput, "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">,
 ): CreateUploadedReportInput {
   return {
     profileId: state.activeProfileId,
     fileName: input.fileName,
     examType: state.scanSession.examType,
     sourceType: input.sourceType,
+    fileDataUrl: input.fileDataUrl,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
   };
 }
 
@@ -767,6 +771,18 @@ function formatDateLabel(date: string) {
     day: "2-digit",
     year: "numeric",
   }).format(new Date(date));
+}
+
+function formatAssetSize(sizeBytes?: number) {
+  if (!sizeBytes || sizeBytes <= 0) {
+    return "";
+  }
+
+  if (sizeBytes >= 1024 * 1024) {
+    return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
 }
 
 function statusToTone(status: BiomarkerStatus): "danger" | "accent" | "success" {
@@ -815,44 +831,65 @@ function deriveStoreData(state: HealthAppState) {
     accent: profile.id === state.activeProfileId,
   }));
 
-  const recentRecordItems: RecentRecordItem[] = profileReports.slice(0, 3).map((report) => ({
-    id: report.id,
-    title: report.title,
-    date: formatDateLabel(report.date),
-    location: report.location,
-    tag: sceneToTag(report.sceneType),
-    status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
-    tone:
-      report.status === "failed"
-        ? "danger"
-        : report.sourceType === "manual"
-          ? "accent"
-          : report.sceneType === "INPATIENT"
+  const recentRecordItems: RecentRecordItem[] = profileReports.slice(0, 3).map((report) => {
+    const versionState = getReportVersionState(report);
+
+    return {
+      id: report.id,
+      title: report.title,
+      date: formatDateLabel(report.date),
+      location: report.location,
+      tag: sceneToTag(report.sceneType),
+      status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
+      tone:
+        report.status === "failed"
+          ? "danger"
+          : report.sourceType === "manual"
+            ? "accent"
+            : report.sceneType === "INPATIENT"
+              ? "accent"
+              : "success",
+      versionLabel: versionState.label,
+      versionTone: versionState.tone,
+    };
+  });
+
+  const reportArchiveItems: ReportArchiveItem[] = profileReports.map((report) => {
+    const versionState = getReportVersionState(report);
+
+    return {
+      id: report.id,
+      rawDate: report.date,
+      title: report.title,
+      date: formatDateLabel(report.date),
+      location: report.location,
+      examType: report.examType,
+      sourceType: report.sourceType,
+      status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
+      aiAccuracy: `${report.aiAccuracy.toFixed(1)}%`,
+      savedAt: state.reportSavedAt[report.id],
+      isFavorite: report.isFavorite ?? false,
+      sourceFileName: report.sourceFile?.fileName,
+      hasSourceFile: Boolean(report.sourceFile?.url),
+      sourceFileMeta:
+        report.sourceFile
+          ? [report.sourceFile.mimeType === "application/pdf" ? "PDF" : "IMAGE", formatAssetSize(report.sourceFile.sizeBytes)]
+              .filter(Boolean)
+              .join(" • ")
+          : undefined,
+      versionLabel: versionState.label,
+      versionTone: versionState.tone,
+      versionDetail: versionState.detail,
+      tone:
+        report.status === "failed"
+          ? "danger"
+          : report.status === "processing"
+          ? "warning"
+          : report.sourceType === "manual" || report.sceneType === "INPATIENT"
             ? "accent"
             : "success",
-  }));
-
-  const reportArchiveItems: ReportArchiveItem[] = profileReports.map((report) => ({
-    id: report.id,
-    rawDate: report.date,
-    title: report.title,
-    date: formatDateLabel(report.date),
-    location: report.location,
-    examType: report.examType,
-    sourceType: report.sourceType,
-    status: report.status === "ready" ? "READY" : report.status === "failed" ? "FAILED" : "PROCESSING",
-    aiAccuracy: `${report.aiAccuracy.toFixed(1)}%`,
-    savedAt: state.reportSavedAt[report.id],
-    isFavorite: report.isFavorite ?? false,
-    tone:
-      report.status === "failed"
-        ? "danger"
-        : report.status === "processing"
-        ? "warning"
-        : report.sourceType === "manual" || report.sceneType === "INPATIENT"
-          ? "accent"
-          : "success",
-  }));
+    };
+  });
 
   const categoryMap = new Map<string, BiomarkerResult[]>();
   profileReports.flatMap((report) => report.results).forEach((result) => {
@@ -980,16 +1017,26 @@ type HealthStoreValue = {
     saveSelectedReport: () => Promise<boolean>;
     updateReport: (reportId: string, patch: UpdateReportInput) => Promise<boolean>;
     updateSelectedReport: (patch: UpdateReportInput) => Promise<boolean>;
+    setReportFavorite: (reportId: string, isFavorite: boolean) => Promise<boolean>;
+    setSelectedReportFavorite: (isFavorite: boolean) => Promise<boolean>;
     deleteReport: (reportId: string) => Promise<boolean>;
     deleteSelectedReport: () => Promise<boolean>;
     setScanExamType: (examType: ExamType) => void;
     setScanProgress: (progress: number) => void;
     startScan: () => void;
-    createUploadedReport: (input: Pick<CreateUploadedReportInput, "fileName" | "sourceType">) => Promise<boolean>;
+    createUploadedReport: (input: Pick<CreateUploadedReportInput, "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">) => Promise<boolean>;
+    uploadReportFile: (reportId: string, input: { fileName: string; fileDataUrl: string; mimeType?: string; sizeBytes?: number }) => Promise<boolean>;
+    replaceReportSource: (
+      reportId: string,
+      input: { fileName: string; fileDataUrl: string; sourceType: "image" | "pdf"; mimeType?: string; sizeBytes?: number },
+    ) => Promise<boolean>;
+    deleteReportFile: (reportId: string) => Promise<boolean>;
     retryReport: (reportId: string) => Promise<boolean>;
     completeScan: () => Promise<Report | null>;
     retrySelectedScan: () => Promise<boolean>;
     selectReport: (reportId: string) => void;
+    refreshReport: (reportId: string) => Promise<Report | null>;
+    refreshSelectedReport: () => Promise<Report | null>;
     loadReportResults: (reportId: string) => Promise<boolean>;
     setManualMeta: (field: "date" | "examType" | "panel", value: string) => void;
     setManualValue: (code: string, value: string) => void;
@@ -1110,6 +1157,21 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
         return false;
       }
     };
+    const setReportFavorite = async (reportId: string, isFavorite: boolean) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.setFavorite(reportId, isFavorite);
+        dispatch({ type: "reports/updateSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to update report favorite");
+        return false;
+      }
+    };
     const deleteReport = async (reportId: string) => {
       if (!reportId) {
         return false;
@@ -1141,6 +1203,108 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
         return true;
       } catch (error: unknown) {
         setSyncError(error instanceof Error ? error.message : "Failed to retry scan");
+        return false;
+      }
+    };
+    const refreshReport = async (reportId: string) => {
+      if (!reportId) {
+        return null;
+      }
+
+      try {
+        const report = await api.reports.get(reportId);
+
+        if (!report) {
+          setSyncError(null);
+          return null;
+        }
+
+        if (report.status === "ready" || report.status === "failed") {
+          dispatch({ type: "scan/completeSuccess", report });
+        } else {
+          dispatch({ type: "reports/updateSuccess", report });
+        }
+
+        setSyncError(null);
+        return report;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to refresh report");
+        return null;
+      }
+    };
+    const uploadReportFile = async (
+      reportId: string,
+      input: { fileName: string; fileDataUrl: string; mimeType?: string; sizeBytes?: number },
+    ) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.uploadFile(reportId, {
+          fileName: input.fileName,
+          dataUrl: input.fileDataUrl,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        });
+        dispatch({ type: "reports/updateSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to upload report file");
+        return false;
+      }
+    };
+    const replaceReportSource = async (
+      reportId: string,
+      input: { fileName: string; fileDataUrl: string; sourceType: "image" | "pdf"; mimeType?: string; sizeBytes?: number },
+    ) => {
+      if (!reportId) {
+        return false;
+      }
+
+      const existingReport = state.reports.find((report) => report.id === reportId);
+
+      if (!existingReport) {
+        setSyncError(`Report ${reportId} not found`);
+        return false;
+      }
+
+      try {
+        await api.reports.uploadFile(reportId, {
+          fileName: input.fileName,
+          dataUrl: input.fileDataUrl,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        });
+        const report = await api.reports.attachSource(reportId, {
+          fileName: input.fileName,
+          examType: existingReport.examType,
+          sourceType: input.sourceType,
+          fileDataUrl: input.fileDataUrl,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        });
+        dispatch({ type: "reports/createUploadedSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to replace report source");
+        return false;
+      }
+    };
+    const deleteReportFile = async (reportId: string) => {
+      if (!reportId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.deleteFile(reportId);
+        dispatch({ type: "reports/updateSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to delete report file");
         return false;
       }
     };
@@ -1295,6 +1459,15 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
 
           return updateReport(state.selectedReportId, patch);
         },
+        setReportFavorite,
+        setSelectedReportFavorite: async (isFavorite) => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          return setReportFavorite(state.selectedReportId, isFavorite);
+        },
         deleteReport,
         deleteSelectedReport: async () => {
           if (!state.selectedReportId) {
@@ -1318,6 +1491,9 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
             return false;
           }
         },
+        uploadReportFile,
+        replaceReportSource,
+        deleteReportFile,
         completeScan: async () => {
           if (!state.selectedReportId) {
             setSyncError("No report is selected.");
@@ -1325,7 +1501,7 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
           }
 
           try {
-            const report = await api.reports.completeScan(state.selectedReportId);
+            const report = await api.reports.startScan(state.selectedReportId);
             dispatch({ type: "scan/completeSuccess", report });
             setSyncError(null);
             return report;
@@ -1344,6 +1520,15 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
           return retryReport(state.selectedReportId);
         },
         selectReport: (reportId) => dispatch({ type: "reports/select", reportId }),
+        refreshReport,
+        refreshSelectedReport: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return null;
+          }
+
+          return refreshReport(state.selectedReportId);
+        },
         loadReportResults: async (reportId) => {
           try {
             const results = await api.reports.getResults(reportId);

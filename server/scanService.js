@@ -113,6 +113,7 @@ export function createMockUploadedReport(input) {
     `${input.fileName ?? ""}`.trim() || (input.sourceType === "pdf" ? "Imported Report.pdf" : "Camera Capture.jpg")
   const baseTitle = stripExtension(normalizedFileName)
   const scanScenario = inferMockScanScenario(normalizedFileName)
+  const sourceUpdatedAt = new Date().toISOString()
 
   return {
     id: `report_scan_${randomUUID().slice(0, 8)}`,
@@ -128,6 +129,8 @@ export function createMockUploadedReport(input) {
     results: createSimulatedScanResults(input.examType),
     isFavorite: false,
     scanScenario,
+    sourceUpdatedAt,
+    resultsGeneratedAt: undefined,
   }
 }
 
@@ -138,6 +141,7 @@ export function completeMockScanReport(report) {
       status: "failed",
       scanFailureCode: "file_invalid",
       scanFailureMessage: "The selected file appears damaged or unsupported. Please upload a cleaner report file.",
+      resultsGeneratedAt: new Date().toISOString(),
     }
   }
 
@@ -147,6 +151,7 @@ export function completeMockScanReport(report) {
       status: "failed",
       scanFailureCode: "ocr_failed",
       scanFailureMessage: "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file.",
+      resultsGeneratedAt: new Date().toISOString(),
     }
   }
 
@@ -155,6 +160,7 @@ export function completeMockScanReport(report) {
     status: "ready",
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
+    resultsGeneratedAt: new Date().toISOString(),
   }
 }
 
@@ -165,5 +171,6 @@ export function retryMockScanReport(report) {
     scanScenario: report.scanScenario === "ocr_retryable" ? "normal" : report.scanScenario,
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
+    resultsGeneratedAt: undefined,
   }
 }

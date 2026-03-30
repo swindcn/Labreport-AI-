@@ -23,6 +23,8 @@ export type RecentRecordItem = {
   tag: string;
   status: string;
   tone: Tone;
+  versionLabel?: string;
+  versionTone?: Tone;
 };
 
 export type ReportArchiveItem = {
@@ -37,6 +39,12 @@ export type ReportArchiveItem = {
   aiAccuracy: string;
   savedAt?: string;
   isFavorite?: boolean;
+  sourceFileName?: string;
+  sourceFileMeta?: string;
+  hasSourceFile?: boolean;
+  versionLabel?: string;
+  versionTone?: Tone;
+  versionDetail?: string;
   tone: Tone;
 };
 
@@ -199,6 +207,7 @@ export function RecentRecordsSection({
                 </div>
                 <div className="flex items-center gap-3">
                   <Chip label={record.tag} tone={record.tone} />
+                  {record.versionLabel ? <Chip label={record.versionLabel} tone={record.versionTone ?? "accent"} /> : null}
                   <span className="text-slate-400">›</span>
                 </div>
               </div>
@@ -213,12 +222,14 @@ export function RecentRecordsSection({
 export function ReportArchiveList({
   reports,
   onSelectReport,
+  onPreviewSource,
   selectionEnabled,
   selectedReportIds,
   onToggleSelectReport,
 }: {
   reports: ReportArchiveItem[];
   onSelectReport?: (reportId: string) => void;
+  onPreviewSource?: (reportId: string) => void;
   selectionEnabled?: boolean;
   selectedReportIds?: string[];
   onToggleSelectReport?: (reportId: string) => void;
@@ -245,6 +256,26 @@ export function ReportArchiveList({
                     <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                       {report.examType} • {report.sourceType}
                     </p>
+                    {report.sourceFileName ? (
+                      <p className="mt-2 truncate text-xs text-slate-500">
+                        {report.sourceFileName}
+                        {report.sourceFileMeta ? ` • ${report.sourceFileMeta}` : ""}
+                      </p>
+                    ) : null}
+                    {report.versionLabel ? (
+                      <p className={`mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] ${
+                        report.versionTone === "success"
+                          ? "text-[#1b7f4d]"
+                          : report.versionTone === "danger"
+                            ? "text-[#d92d20]"
+                            : report.versionTone === "warning"
+                              ? "text-[#9a6700]"
+                              : "text-[#1E40AF]"
+                      }`}>
+                        {report.versionLabel}
+                        {report.versionDetail ? ` • ${report.versionDetail}` : ""}
+                      </p>
+                    ) : null}
                     {report.isFavorite ? (
                       <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#cc8a00]">
                         Favorite Report
@@ -274,43 +305,78 @@ export function ReportArchiveList({
             </Card>
           </button>
         ) : (
-          <RouteLink
-            key={report.id}
-            to={report.status === "READY" ? "/report-analysis" : "/scanning"}
-            className="block"
-            onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
-          >
-            <Card>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">{report.title}</p>
-                    <p className="mt-1 truncate text-sm text-slate-500">
-                      {report.date} • {report.location}
+          <Card key={report.id}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <CircleIcon label={report.title.slice(0, 2).toUpperCase()} tone={report.tone} />
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{report.title}</p>
+                  <p className="mt-1 truncate text-sm text-slate-500">
+                    {report.date} • {report.location}
+                  </p>
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    {report.examType} • {report.sourceType}
+                  </p>
+                  {report.sourceFileName ? (
+                    <p className="mt-2 truncate text-xs text-slate-500">
+                      {report.sourceFileName}
+                      {report.sourceFileMeta ? ` • ${report.sourceFileMeta}` : ""}
                     </p>
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                      {report.examType} • {report.sourceType}
+                  ) : null}
+                  {report.versionLabel ? (
+                    <p className={`mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] ${
+                      report.versionTone === "success"
+                        ? "text-[#1b7f4d]"
+                        : report.versionTone === "danger"
+                          ? "text-[#d92d20]"
+                          : report.versionTone === "warning"
+                            ? "text-[#9a6700]"
+                            : "text-[#1E40AF]"
+                    }`}>
+                      {report.versionLabel}
+                      {report.versionDetail ? ` • ${report.versionDetail}` : ""}
                     </p>
-                    {report.isFavorite ? (
-                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#cc8a00]">
-                        Favorite Report
-                      </p>
-                    ) : null}
-                    {report.savedAt ? (
-                      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
-                        Saved {report.savedAt}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <Chip label={report.status} tone={report.tone} />
-                  <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+                  ) : null}
+                  {report.isFavorite ? (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#cc8a00]">
+                      Favorite Report
+                    </p>
+                  ) : null}
+                  {report.savedAt ? (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
+                      Saved {report.savedAt}
+                    </p>
+                  ) : null}
                 </div>
               </div>
-            </Card>
-          </RouteLink>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <Chip label={report.status} tone={report.tone} />
+                <span className="text-xs font-semibold text-[#1E40AF]">{report.aiAccuracy}</span>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <RouteLink
+                to={report.status === "READY" ? "/report-analysis" : "/scanning"}
+                className="inline-flex items-center justify-center rounded-[1rem] bg-[#1E40AF] px-3 py-3 text-sm font-semibold text-white"
+                onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
+              >
+                Open Report
+              </RouteLink>
+              {report.hasSourceFile ? (
+                <button
+                  type="button"
+                  onClick={() => onPreviewSource?.(report.id)}
+                  className="inline-flex items-center justify-center rounded-[1rem] bg-white px-3 py-3 text-sm font-semibold text-[#1E40AF] shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+                >
+                  Preview File
+                </button>
+              ) : (
+                <div className="inline-flex items-center justify-center rounded-[1rem] bg-[#eef2fb] px-3 py-3 text-sm font-semibold text-slate-400">
+                  No Source
+                </div>
+              )}
+            </div>
+          </Card>
         )
       ))}
     </div>

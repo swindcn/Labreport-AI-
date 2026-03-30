@@ -1,4 +1,6 @@
 import type {
+  AttachReportSourceInput,
+  AssetUploadInput,
   AuthDraft,
   BiomarkerResult,
   CreateProfileInput,
@@ -47,6 +49,8 @@ export type HealthApi = {
   };
   profiles: {
     create: (input: CreateProfileInput) => Promise<Profile>;
+    uploadAvatar: (profileId: string, input: AssetUploadInput) => Promise<Profile>;
+    deleteAvatar: (profileId: string) => Promise<Profile>;
     update: (
       profileId: string,
       patch: Partial<Pick<Profile, "name" | "relation" | "birthDate" | "gender" | "note" | "initials" | "avatarUrl">>,
@@ -54,11 +58,16 @@ export type HealthApi = {
     delete: (profileId: string) => Promise<DeleteProfileResult>;
   };
   reports: {
+    get: (reportId: string) => Promise<Report | null>;
     createManual: (input: CreateManualReportInput) => Promise<Report>;
     createUploaded: (input: CreateUploadedReportInput) => Promise<Report>;
+    uploadFile: (reportId: string, input: AssetUploadInput) => Promise<Report>;
+    deleteFile: (reportId: string) => Promise<Report>;
+    attachSource: (reportId: string, input: AttachReportSourceInput) => Promise<Report>;
     update: (reportId: string, patch: UpdateReportInput) => Promise<Report>;
+    setFavorite: (reportId: string, isFavorite: boolean) => Promise<Report>;
     delete: (reportId: string) => Promise<DeleteReportResult>;
-    completeScan: (reportId: string) => Promise<Report>;
+    startScan: (reportId: string) => Promise<Report>;
     retryScan: (reportId: string) => Promise<Report>;
     getResults: (reportId: string) => Promise<BiomarkerResult[]>;
   };
@@ -142,6 +151,8 @@ function buildLegacyClientState(legacyState: HealthAppState): HealthClientState 
 }
 
 function createManualReport(input: CreateManualReportInput): Report {
+  const generatedAt = new Date().toISOString();
+
   return {
     id: `report_manual_${Date.now()}`,
     profileId: input.profileId,
@@ -155,6 +166,36 @@ function createManualReport(input: CreateManualReportInput): Report {
     aiAccuracy: 100,
     results: input.results,
     isFavorite: false,
+    sourceUpdatedAt: generatedAt,
+    resultsGeneratedAt: generatedAt,
+  };
+}
+
+function createDraftUploadedReport(profileId: string, examType: Report["examType"]): Report {
+  return {
+    id: `report_upload_${Date.now()}`,
+    profileId,
+    title: "Pending Upload",
+    date: new Date().toISOString(),
+    location: "Awaiting Source",
+    sceneType: examType === "Clinical" ? "INPATIENT" : "ROUTINE",
+    sourceType: "image",
+    status: "processing",
+    examType,
+    aiAccuracy: 0,
+    results: [],
+    isFavorite: false,
+    resultsGeneratedAt: undefined,
+  };
+}
+
+function createInlineAssetRef(input: AssetUploadInput) {
+  return {
+    assetId: `asset_${Date.now()}`,
+    url: input.dataUrl,
+    fileName: input.fileName,
+    mimeType: input.mimeType ?? "application/octet-stream",
+    sizeBytes: input.sizeBytes ?? input.dataUrl.length,
   };
 }
 
@@ -289,7 +330,58 @@ function createLocalHealthApi(): HealthApi {
 
         writeLocalResource(STORAGE_KEYS.profiles, [...profiles, profile]);
 
+        if (input.avatarUrl) {
+          return this.uploadAvatar(profile.id, {
+            fileName: `${input.name || "avatar"}.jpg`,
+            dataUrl: input.avatarUrl,
+            mimeType: "image/jpeg",
+          });
+        }
+
         return profile;
+      },
+      async uploadAvatar(profileId, input) {
+        const profiles = (await readProfiles()) ?? [];
+        const existingProfile = profiles.find((profile) => profile.id === profileId);
+
+        if (!existingProfile) {
+          throw new Error(`Profile ${profileId} not found`);
+        }
+
+        const avatarAsset = createInlineAssetRef(input);
+        const updatedProfile = {
+          ...existingProfile,
+          avatarAsset,
+          avatarUrl: avatarAsset.url,
+        } satisfies Profile;
+
+        writeLocalResource(
+          STORAGE_KEYS.profiles,
+          profiles.map((profile) => (profile.id === profileId ? updatedProfile : profile)),
+        );
+
+        return updatedProfile;
+      },
+      async deleteAvatar(profileId) {
+        const profiles = (await readProfiles()) ?? [];
+        const existingProfile = profiles.find((profile) => profile.id === profileId);
+
+        if (!existingProfile) {
+          throw new Error(`Profile ${profileId} not found`);
+        }
+
+        const updatedProfile = {
+          ...existingProfile,
+          avatarAsset: null,
+          avatarUrl: "",
+        } satisfies Profile;
+
+        writeLocalResource(
+          STORAGE_KEYS.profiles,
+          profiles.map((profile) => (profile.id === profileId ? updatedProfile : profile)),
+        );
+
+        return updatedProfile;
       },
       async update(profileId, patch) {
         const profiles = (await readProfiles()) ?? [];
@@ -308,6 +400,18 @@ function createLocalHealthApi(): HealthApi {
           STORAGE_KEYS.profiles,
           profiles.map((profile) => (profile.id === profileId ? updatedProfile : profile)),
         );
+
+        if (patch.avatarUrl) {
+          return this.uploadAvatar(profileId, {
+            fileName: `${updatedProfile.name || "avatar"}.jpg`,
+            dataUrl: patch.avatarUrl,
+            mimeType: "image/jpeg",
+          });
+        }
+
+        if (patch.avatarUrl === "") {
+          return this.deleteAvatar(profileId);
+        }
 
         return updatedProfile;
       },
@@ -354,6 +458,10 @@ function createLocalHealthApi(): HealthApi {
       },
     },
     reports: {
+      async get(reportId) {
+        const reports = (await readReports()) ?? [];
+        return reports.find((report) => report.id === reportId) ?? null;
+      },
       async createManual(input) {
         const reports = (await readReports()) ?? [];
         const report = createManualReport(input);
@@ -364,11 +472,108 @@ function createLocalHealthApi(): HealthApi {
       },
       async createUploaded(input) {
         const reports = (await readReports()) ?? [];
-        const report = createMockUploadedReport(input);
+        const draftReport = createDraftUploadedReport(input.profileId, input.examType);
 
-        writeLocalResource(STORAGE_KEYS.reports, [report, ...reports]);
+        writeLocalResource(STORAGE_KEYS.reports, [draftReport, ...reports]);
 
-        return report;
+        if (input.fileDataUrl) {
+          await this.uploadFile(draftReport.id, {
+            fileName: input.fileName,
+            dataUrl: input.fileDataUrl,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+          });
+        }
+
+        return this.attachSource(draftReport.id, {
+          fileName: input.fileName,
+          examType: input.examType,
+          sourceType: input.sourceType,
+          fileDataUrl: input.fileDataUrl,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        });
+      },
+      async uploadFile(reportId, input) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const sourceFile = createInlineAssetRef(input);
+        const updatedReport = {
+          ...existingReport,
+          sourceFile,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
+      },
+      async deleteFile(reportId) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const updatedReport = {
+          ...existingReport,
+          sourceFile: null,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
+      },
+      async attachSource(reportId, input) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const sourceReport = createMockUploadedReport({
+          profileId: existingReport.profileId,
+          fileName: input.fileName,
+          examType: input.examType,
+          sourceType: input.sourceType,
+        });
+        const updatedReport = {
+          ...existingReport,
+          title: sourceReport.title,
+          date: sourceReport.date,
+          location: sourceReport.location,
+          sceneType: sourceReport.sceneType,
+          sourceType: sourceReport.sourceType,
+          status: sourceReport.status,
+          examType: sourceReport.examType,
+          aiAccuracy: sourceReport.aiAccuracy,
+          results: sourceReport.results,
+          scanScenario: sourceReport.scanScenario,
+          scanFailureCode: undefined,
+          scanFailureMessage: undefined,
+          sourceFile: existingReport.sourceFile ?? null,
+          sourceUpdatedAt: sourceReport.sourceUpdatedAt,
+          resultsGeneratedAt: undefined,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
       },
       async update(reportId, patch) {
         const reports = (await readReports()) ?? [];
@@ -381,6 +586,26 @@ function createLocalHealthApi(): HealthApi {
         const updatedReport = {
           ...existingReport,
           ...patch,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
+      },
+      async setFavorite(reportId, isFavorite) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const updatedReport = {
+          ...existingReport,
+          isFavorite,
         } satisfies Report;
 
         writeLocalResource(
@@ -419,7 +644,7 @@ function createLocalHealthApi(): HealthApi {
           selectedReportId: nextSelectedReportId,
         };
       },
-      async completeScan(reportId) {
+      async startScan(reportId) {
         const reports = (await readReports()) ?? [];
         const existingReport = reports.find((report) => report.id === reportId);
 
@@ -603,12 +828,41 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
           throw new Error("Profile creation returned empty response");
         }
 
-        return input.avatarUrl && !profile.avatarUrl
-          ? {
-              ...profile,
-              avatarUrl: input.avatarUrl,
-            }
-          : profile;
+        if (input.avatarUrl) {
+          return this.uploadAvatar(profile.id, {
+            fileName: `${input.name || "avatar"}.jpg`,
+            dataUrl: input.avatarUrl,
+            mimeType: "image/jpeg",
+          });
+        }
+
+        return profile;
+      },
+      async uploadAvatar(profileId, input) {
+        const profile = await requestJson<Profile>(resourceUrl(`/profiles/${encodeURIComponent(profileId)}/avatar`), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(input),
+        });
+
+        if (!profile) {
+          throw new Error(`Profile ${profileId} avatar upload returned empty response`);
+        }
+
+        return profile;
+      },
+      async deleteAvatar(profileId) {
+        const profile = await requestJson<Profile>(resourceUrl(`/profiles/${encodeURIComponent(profileId)}/avatar`), {
+          method: "DELETE",
+        });
+
+        if (!profile) {
+          throw new Error(`Profile ${profileId} avatar delete returned empty response`);
+        }
+
+        return profile;
       },
       async update(profileId, patch) {
         const profile = await requestJson<Profile>(resourceUrl(`/profiles/${encodeURIComponent(profileId)}`), {
@@ -623,12 +877,19 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
           throw new Error(`Profile ${profileId} update returned empty response`);
         }
 
-        return patch.avatarUrl !== undefined && profile.avatarUrl !== patch.avatarUrl
-          ? {
-              ...profile,
-              avatarUrl: patch.avatarUrl,
-            }
-          : profile;
+        if (patch.avatarUrl) {
+          return this.uploadAvatar(profileId, {
+            fileName: `${profile.name || "avatar"}.jpg`,
+            dataUrl: patch.avatarUrl,
+            mimeType: "image/jpeg",
+          });
+        }
+
+        if (patch.avatarUrl === "") {
+          return this.deleteAvatar(profileId);
+        }
+
+        return profile;
       },
       async delete(profileId) {
         const payload = await requestJson<DeleteProfileResult>(resourceUrl(`/profiles/${encodeURIComponent(profileId)}`), {
@@ -643,6 +904,9 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
       },
     },
     reports: {
+      async get(reportId) {
+        return requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}`));
+      },
       async createManual(input) {
         const report = await requestJson<Report>(resourceUrl("/reports/manual"), {
           method: "POST",
@@ -654,6 +918,21 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
 
         if (!report) {
           throw new Error("Manual report creation returned empty response");
+        }
+
+        return report;
+      },
+      async attachSource(reportId, input) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/source`), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(input),
+        });
+
+        if (!report) {
+          throw new Error(`Report ${reportId} source update returned empty response`);
         }
 
         return report;
@@ -673,6 +952,21 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
 
         return report;
       },
+      async setFavorite(reportId, isFavorite) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/favorite`), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ isFavorite }),
+        });
+
+        if (!report) {
+          throw new Error(`Report ${reportId} favorite update returned empty response`);
+        }
+
+        return report;
+      },
       async delete(reportId) {
         const payload = await requestJson<DeleteReportResult>(resourceUrl(`/reports/${encodeURIComponent(reportId)}`), {
           method: "DELETE",
@@ -685,7 +979,41 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
         return payload;
       },
       async createUploaded(input) {
-        const report = await requestJson<Report>(resourceUrl("/reports"), {
+        const draftReport = await requestJson<Report>(resourceUrl("/reports"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            profileId: input.profileId,
+            examType: input.examType,
+          }),
+        });
+
+        if (!draftReport) {
+          throw new Error("Uploaded report creation returned empty response");
+        }
+
+        if (input.fileDataUrl) {
+          await this.uploadFile(draftReport.id, {
+            fileName: input.fileName,
+            dataUrl: input.fileDataUrl,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+          });
+        }
+
+        return this.attachSource(draftReport.id, {
+          fileName: input.fileName,
+          examType: input.examType,
+          sourceType: input.sourceType,
+          fileDataUrl: input.fileDataUrl,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        });
+      },
+      async uploadFile(reportId, input) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/files`), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -694,18 +1022,29 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
         });
 
         if (!report) {
-          throw new Error("Uploaded report creation returned empty response");
+          throw new Error(`Report ${reportId} file upload returned empty response`);
         }
 
         return report;
       },
-      async completeScan(reportId) {
-        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/complete`), {
+      async deleteFile(reportId) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/files`), {
+          method: "DELETE",
+        });
+
+        if (!report) {
+          throw new Error(`Report ${reportId} file delete returned empty response`);
+        }
+
+        return report;
+      },
+      async startScan(reportId) {
+        const report = await requestJson<Report>(resourceUrl(`/reports/${encodeURIComponent(reportId)}/scan`), {
           method: "POST",
         });
 
         if (!report) {
-          throw new Error(`Report ${reportId} completion returned empty response`);
+          throw new Error(`Report ${reportId} scan start returned empty response`);
         }
 
         return report;

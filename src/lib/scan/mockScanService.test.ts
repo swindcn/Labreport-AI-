@@ -29,6 +29,8 @@ test("createMockUploadedReport creates processing report with expected metadata"
   assert.equal(report.sourceType, "pdf");
   assert.equal(report.isFavorite, false);
   assert.ok(report.results.length > 0);
+  assert.ok(report.sourceUpdatedAt);
+  assert.equal(report.resultsGeneratedAt, undefined);
 });
 
 test("completeMockScanReport converts retryable OCR scans into failed reports", () => {
@@ -42,6 +44,7 @@ test("completeMockScanReport converts retryable OCR scans into failed reports", 
 
   assert.equal(completed.status, "failed");
   assert.equal(completed.scanFailureCode, "ocr_failed");
+  assert.ok(completed.resultsGeneratedAt);
 });
 
 test("retryMockScanReport moves retryable OCR scans back to processing and clears error fields", () => {
@@ -59,4 +62,5 @@ test("retryMockScanReport moves retryable OCR scans back to processing and clear
   assert.equal(retried.scanScenario, "normal");
   assert.equal(retried.scanFailureCode, undefined);
   assert.equal(retried.scanFailureMessage, undefined);
+  assert.equal(retried.resultsGeneratedAt, undefined);
 });

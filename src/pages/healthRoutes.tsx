@@ -53,6 +53,7 @@ const inAppTabs = [
 ];
 
 const PROFILE_FORM_RETURN_KEY = "vitalis-profile-form-return-path";
+const REPORT_SOURCE_RETURN_KEY = "vitalis-report-source-return-path";
 
 function setProfileFormReturnPath(path: string) {
   window.sessionStorage.setItem(PROFILE_FORM_RETURN_KEY, path);
@@ -65,6 +66,20 @@ function getProfileFormReturnPath() {
 function consumeProfileFormReturnPath(fallback: string) {
   const path = getProfileFormReturnPath() ?? fallback;
   window.sessionStorage.removeItem(PROFILE_FORM_RETURN_KEY);
+  return path;
+}
+
+function setReportSourceReturnPath(path: string) {
+  window.sessionStorage.setItem(REPORT_SOURCE_RETURN_KEY, path);
+}
+
+function getReportSourceReturnPath() {
+  return window.sessionStorage.getItem(REPORT_SOURCE_RETURN_KEY);
+}
+
+function consumeReportSourceReturnPath(fallback: string) {
+  const path = getReportSourceReturnPath() ?? fallback;
+  window.sessionStorage.removeItem(REPORT_SOURCE_RETURN_KEY);
   return path;
 }
 
@@ -115,6 +130,27 @@ function readImageFile(file: File) {
   });
 }
 
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Failed to read file"));
+    };
+
+    reader.onerror = () => {
+      reject(new Error("Failed to read file"));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 function formatReportAnalysisMeta(date: string, location: string) {
   return `${new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -141,6 +177,9 @@ type PendingUploadSelection = {
   sourceType: "image" | "pdf";
   fileName: string;
   fileSizeLabel: string;
+  mimeType: string;
+  sizeBytes: number;
+  fileDataUrl: string;
   previewUrl: string | null;
 };
 
@@ -167,6 +206,24 @@ function formatFileSize(bytes: number) {
   }
 
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function formatTimestampLabel(value?: string) {
+  if (!value) {
+    return "Unavailable";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function openFileUrl(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function ScreensIndexPage() {
@@ -414,7 +471,7 @@ function UploadReportPage() {
     filesInputRef.current?.click();
   };
 
-  const handleSelectedFile = (source: UploadSourceKind, file: File | null) => {
+  const handleSelectedFile = async (source: UploadSourceKind, file: File | null) => {
     if (!file) {
       return;
     }
@@ -443,6 +500,15 @@ function UploadReportPage() {
       return;
     }
 
+    let fileDataUrl = "";
+
+    try {
+      fileDataUrl = await readFileAsDataUrl(file);
+    } catch {
+      setValidationError("Failed to read the selected file.");
+      return;
+    }
+
     setPendingUpload((current) => {
       if (current?.previewUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(current.previewUrl);
@@ -453,6 +519,9 @@ function UploadReportPage() {
         sourceType,
         fileName: file.name || (sourceType === "pdf" ? "Imported Report.pdf" : "Camera Capture.jpg"),
         fileSizeLabel: formatFileSize(file.size),
+        mimeType: file.type || (sourceType === "pdf" ? "application/pdf" : "image/jpeg"),
+        sizeBytes: file.size,
+        fileDataUrl,
         previewUrl: sourceType === "image" ? URL.createObjectURL(file) : null,
       };
     });
@@ -462,7 +531,7 @@ function UploadReportPage() {
   const handleFileChange =
     (source: UploadSourceKind) =>
     (event: ChangeEvent<HTMLInputElement>) => {
-      handleSelectedFile(source, event.target.files?.[0] ?? null);
+      void handleSelectedFile(source, event.target.files?.[0] ?? null);
       event.target.value = "";
     };
 
@@ -476,6 +545,9 @@ function UploadReportPage() {
       .createUploadedReport({
         fileName: pendingUpload.fileName,
         sourceType: pendingUpload.sourceType,
+        fileDataUrl: pendingUpload.fileDataUrl,
+        mimeType: pendingUpload.mimeType,
+        sizeBytes: pendingUpload.sizeBytes,
       })
       .then((created) => {
         if (created) {
@@ -610,8 +682,14 @@ function ScanningPage() {
   const setScanProgress = actions.setScanProgress;
   const completeScan = actions.completeScan;
   const retrySelectedScan = actions.retrySelectedScan;
+  const refreshSelectedReport = actions.refreshSelectedReport;
   const hasScanFailure = selectedReport?.status === "failed";
   const scanFailureCode = selectedReport?.scanFailureCode;
+  const awaitingFreshResults = Boolean(
+    selectedReport?.sourceUpdatedAt &&
+      (!selectedReport.resultsGeneratedAt ||
+        new Date(selectedReport.resultsGeneratedAt).getTime() < new Date(selectedReport.sourceUpdatedAt).getTime()),
+  );
 
   useEffect(() => {
     if (!selectedReport?.id || selectedReport.status === "ready" || selectedReport.status === "failed") {
@@ -673,6 +751,20 @@ function ScanningPage() {
     }
   }, [selectedReport?.status, state.scanSession.progress]);
 
+  useEffect(() => {
+    if (!selectedReport?.id || selectedReport.status !== "processing") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void refreshSelectedReport();
+    }, 1400);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [refreshSelectedReport, selectedReport?.id, selectedReport?.status, state.scanSession.progress]);
+
   const handleRetryScan = () => {
     void retrySelectedScan();
   };
@@ -715,6 +807,11 @@ function ScanningPage() {
         {selectedReport ? (
           <p className="mx-auto mt-3 max-w-[16rem] text-sm font-semibold text-[#1E40AF]">
             {selectedReport.title} • {selectedReport.sourceType.toUpperCase()}
+          </p>
+        ) : null}
+        {awaitingFreshResults && selectedReport?.sourceUpdatedAt ? (
+          <p className="mx-auto mt-2 max-w-[17rem] text-xs font-semibold uppercase tracking-[0.12em] text-[#cc8a00]">
+            Awaiting fresh results for file updated {formatTimestampLabel(selectedReport.sourceUpdatedAt)}
           </p>
         ) : null}
       </div>
@@ -793,6 +890,12 @@ function ReportAnalysisPage() {
   const selectedArchiveItem = selectedReport
     ? derived.reportArchiveItems.find((report) => report.id === selectedReport.id)
     : undefined;
+  const hasLatestResults = Boolean(
+    selectedReport?.sourceUpdatedAt &&
+      selectedReport?.resultsGeneratedAt &&
+      new Date(selectedReport.resultsGeneratedAt).getTime() >= new Date(selectedReport.sourceUpdatedAt).getTime(),
+  );
+  const awaitingFreshResults = Boolean(selectedReport?.sourceUpdatedAt && !hasLatestResults);
 
   useEffect(() => {
     if (!sync.hydrated || !selectedReport?.id) {
@@ -815,9 +918,7 @@ function ReportAnalysisPage() {
       return;
     }
 
-    void actions.updateSelectedReport({
-      isFavorite: !selectedReport.isFavorite,
-    });
+    void actions.setSelectedReportFavorite(!(selectedReport.isFavorite ?? false));
   };
 
   const handleExportResults = () => {
@@ -865,6 +966,15 @@ function ReportAnalysisPage() {
     });
   };
 
+  const handlePreviewSource = () => {
+    if (!selectedReport?.sourceFile) {
+      return;
+    }
+
+    setReportSourceReturnPath("/report-analysis");
+    window.location.hash = "#/report-source";
+  };
+
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/dashboard">←</RouteLink>} title="Health Report" right="↗" />}>
       <div className="px-1">
@@ -902,6 +1012,61 @@ function ReportAnalysisPage() {
           </div>
         </Card>
       </div>
+
+      {selectedReport?.sourceFile ? (
+        <Card className="bg-[#f8fbff]">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-500">Source File</p>
+              <p className="mt-2 truncate text-base font-semibold text-slate-900">{selectedReport.sourceFile.fileName}</p>
+              <p className="mt-1 text-sm text-slate-500">
+                {(selectedReport.sourceFile.mimeType === "application/pdf" ? "PDF" : "Image") +
+                  " • " +
+                  formatFileSize(selectedReport.sourceFile.sizeBytes)}
+              </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                Source Updated {formatTimestampLabel(selectedReport.sourceUpdatedAt)}
+              </p>
+              <p
+                className={`mt-2 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  awaitingFreshResults ? "text-[#cc8a00]" : "text-[#1E40AF]"
+                }`}
+              >
+                {awaitingFreshResults
+                  ? "Results are not yet regenerated for this file"
+                  : `Results Generated ${formatTimestampLabel(selectedReport.resultsGeneratedAt)}`}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col gap-2">
+              <button
+                type="button"
+                onClick={handlePreviewSource}
+                className="rounded-[1rem] bg-white px-3 py-2 text-sm font-semibold text-[#1E40AF] shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => openFileUrl(selectedReport.sourceFile!.url)}
+                className="rounded-[1rem] bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+              >
+                Open File
+              </button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
+      {awaitingFreshResults ? (
+        <Card className="bg-[#fff8ec]">
+          <div className="flex gap-3">
+            <CircleIcon label="!" tone="warning" />
+            <p className="text-[1.02rem] leading-7 text-[#9a6700]">
+              This report has a newer source file than the current analysis output. Open the source view and replace or rescan the file to generate fresh biomarker results.
+            </p>
+          </div>
+        </Card>
+      ) : null}
 
       <ReportBiomarkerSections groups={derived.reportBiomarkerGroups} />
 
@@ -957,6 +1122,190 @@ function ReportAnalysisPage() {
       {selectedArchiveItem?.savedAt ? (
         <p className="text-center text-xs font-semibold text-[#1E40AF]">Saved to archive on {selectedArchiveItem.savedAt}</p>
       ) : null}
+      {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
+    </PhoneFrame>
+  );
+}
+
+function ReportSourcePage() {
+  const { derived, actions, sync } = useHealthStore();
+  const selectedReport = derived.selectedReport;
+  const sourceFile = selectedReport?.sourceFile ?? null;
+  const [backTo] = useState(() => consumeReportSourceReturnPath("/report-analysis"));
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [isUpdatingFile, setIsUpdatingFile] = useState(false);
+  const isPdf = sourceFile?.mimeType === "application/pdf";
+  const isImage = Boolean(sourceFile?.mimeType?.startsWith("image/"));
+
+  const handlePickReplacement = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleReplaceFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file || !selectedReport?.id) {
+      return;
+    }
+
+    const sourceType = getUploadSourceType(file);
+    const isPdfFile = sourceType === "pdf";
+
+    if (!isPdfFile && file.size > MAX_IMAGE_FILE_SIZE_BYTES) {
+      setFileError("Image file is too large. Please choose an image smaller than 12 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    if (isPdfFile && file.size > MAX_PDF_FILE_SIZE_BYTES) {
+      setFileError("PDF file is too large. Please choose a document smaller than 20 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    setIsUpdatingFile(true);
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const saved = await actions.replaceReportSource(selectedReport.id, {
+        fileName: file.name || (isPdfFile ? "Imported Report.pdf" : "Camera Capture.jpg"),
+        fileDataUrl: dataUrl,
+        sourceType,
+        mimeType: file.type || (isPdfFile ? "application/pdf" : "image/jpeg"),
+        sizeBytes: file.size,
+      });
+
+      if (saved) {
+        setFileError(null);
+        window.location.hash = "#/scanning";
+      }
+    } catch {
+      setFileError("Failed to read the selected file.");
+    } finally {
+      setIsUpdatingFile(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleDeleteFile = () => {
+    if (!selectedReport?.id) {
+      return;
+    }
+
+    setIsUpdatingFile(true);
+    void actions
+      .deleteReportFile(selectedReport.id)
+      .then((deleted) => {
+        if (deleted) {
+          setFileError(null);
+        }
+      })
+      .finally(() => {
+        setIsUpdatingFile(false);
+      });
+  };
+
+  return (
+    <PhoneFrame header={<TopBar left={<RouteLink to={backTo}>←</RouteLink>} title="Report Source" right="↗" />}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        className="hidden"
+        onChange={(event) => {
+          void handleReplaceFile(event);
+        }}
+      />
+      <div className="px-1">
+        <Label>SOURCE PREVIEW</Label>
+        <h2 className="mt-2 text-[2.2rem] font-semibold leading-[0.98] tracking-[-0.04em] text-slate-900">
+          Original Uploaded File
+        </h2>
+        <p className="mt-3 text-[1.02rem] leading-7 text-slate-500">
+          Review the uploaded source before or after AI extraction. This helps validate whether OCR issues came from blur, framing, or file quality.
+        </p>
+      </div>
+
+      {selectedReport && sourceFile ? (
+        <>
+          <Card className="bg-[#f8fbff]">
+            <p className="text-sm text-slate-500">Linked Report</p>
+            <p className="mt-2 text-lg font-semibold text-slate-900">{selectedReport.title}</p>
+            <p className="mt-2 text-sm text-slate-500">
+              {sourceFile.fileName} • {isPdf ? "PDF" : isImage ? "Image" : sourceFile.mimeType} • {formatFileSize(sourceFile.sizeBytes)}
+            </p>
+          </Card>
+
+          <Card className="overflow-hidden bg-white p-0">
+            {isImage ? (
+              <img src={sourceFile.url} alt={sourceFile.fileName} className="max-h-[28rem] w-full object-contain bg-[#eef3ff]" />
+            ) : isPdf ? (
+              <iframe title={sourceFile.fileName} src={sourceFile.url} className="h-[30rem] w-full bg-white" />
+            ) : (
+              <div className="flex h-[18rem] items-center justify-center bg-[#eef3ff] px-6 text-center text-sm font-semibold text-slate-500">
+                Inline preview is not available for this file type.
+              </div>
+            )}
+          </Card>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => openFileUrl(sourceFile.url)}
+              className="inline-flex items-center justify-center rounded-[1.2rem] bg-[#1E40AF] px-4 py-4 text-base font-semibold text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+            >
+              Open in New Tab
+            </button>
+            <RouteButton to={backTo} tone="secondary">
+              Back
+            </RouteButton>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handlePickReplacement}
+              disabled={isUpdatingFile}
+              className={`inline-flex items-center justify-center rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
+                !isUpdatingFile ? "bg-white text-[#1E40AF] shadow-[0_14px_28px_rgba(135,149,198,0.10)]" : "bg-[#d9dfef] text-slate-500"
+              }`}
+            >
+              {isUpdatingFile ? "Updating..." : "Replace File"}
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteFile}
+              disabled={isUpdatingFile}
+              className={`inline-flex items-center justify-center rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
+                !isUpdatingFile ? "bg-[#fff1f1] text-[#d92d20]" : "bg-[#f3d6d4] text-[#b78480]"
+              }`}
+            >
+              Remove File
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <Card className="bg-[#f4f7ff]">
+            <p className="text-sm leading-6 text-slate-500">
+              No source file is linked to the current report yet. You can attach an image or PDF here without leaving the current report context.
+            </p>
+          </Card>
+          <button
+            type="button"
+            onClick={handlePickReplacement}
+            disabled={isUpdatingFile || !selectedReport?.id}
+            className={`inline-flex items-center justify-center rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
+              !isUpdatingFile && selectedReport?.id
+                ? "bg-[#1E40AF] text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+                : "bg-[#d9dfef] text-slate-500"
+            }`}
+          >
+            {isUpdatingFile ? "Uploading..." : "Attach Source File"}
+          </button>
+        </>
+      )}
+      {fileError ? <p className="text-center text-xs font-semibold text-[#d92d20]">{fileError}</p> : null}
       {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
     </PhoneFrame>
   );
@@ -1669,7 +2018,7 @@ function ProfilePage() {
         <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p>
       ) : null}
       <RouteLink to="/screens" className="text-center text-[11px] uppercase tracking-[0.18em] text-slate-400">
-        eALTE AI v2.4.0 • Established 2024
+        Vitalis Core v0.3.0 • Established 2024
       </RouteLink>
       <BottomTabs active="/profile" items={inAppTabs} />
     </PhoneFrame>
@@ -1764,6 +2113,12 @@ function ReportsArchivePage() {
       .finally(() => {
         setIsBulkSubmitting(false);
       });
+  };
+
+  const handlePreviewSource = (reportId: string) => {
+    actions.selectReport(reportId);
+    setReportSourceReturnPath("/reports-archive");
+    window.location.hash = "#/report-source";
   };
 
   return (
@@ -1916,6 +2271,7 @@ function ReportsArchivePage() {
               <ReportArchiveList
                 reports={group.reports}
                 onSelectReport={actions.selectReport}
+                onPreviewSource={handlePreviewSource}
                 selectionEnabled={manageFailedMode}
                 selectedReportIds={selectedFailedIds}
                 onToggleSelectReport={handleToggleFailedSelection}
@@ -1997,6 +2353,12 @@ export const screenRoutes: RouteConfig[] = [
     title: "Report Analysis",
     description: "AI 识别结果",
     element: <ReportAnalysisPage />,
+  },
+  {
+    path: "/report-source",
+    title: "Report Source",
+    description: "报告原始文件预览",
+    element: <ReportSourcePage />,
   },
   {
     path: "/reports-archive",

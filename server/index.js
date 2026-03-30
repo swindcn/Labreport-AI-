@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createLocalAssetStore } from "./assetStore.js"
 import {
   completeMockScanReport,
   createMockUploadedReport,
@@ -11,11 +12,26 @@ import {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const dataDir = path.join(__dirname, "data")
-const runtimeDir = path.join(dataDir, "runtime")
-const seedPath = path.join(dataDir, "seed.json")
-const dbPath = path.join(runtimeDir, "health-db.json")
+const configuredDataDir = process.env.API_DATA_DIR
+const configuredRuntimeDir = process.env.API_RUNTIME_DIR
+const configuredSeedPath = process.env.API_SEED_PATH
+const configuredDbPath = process.env.API_DB_PATH
+const dataDir = configuredDataDir ? path.resolve(configuredDataDir) : path.join(__dirname, "data")
+const runtimeDir = configuredRuntimeDir ? path.resolve(configuredRuntimeDir) : path.join(dataDir, "runtime")
+const assetsDir = path.join(runtimeDir, "assets")
+const seedPath = configuredSeedPath ? path.resolve(configuredSeedPath) : path.join(dataDir, "seed.json")
+const dbPath = configuredDbPath ? path.resolve(configuredDbPath) : path.join(runtimeDir, "health-db.json")
 const port = Number(process.env.API_PORT ?? 8787)
+
+function buildAssetContentUrl(request, assetId) {
+  const host = request.headers.host ?? `127.0.0.1:${port}`
+  return `http://${host}/api/assets/${encodeURIComponent(assetId)}/content`
+}
+
+const assetStore = createLocalAssetStore({
+  assetsDir,
+  buildAssetUrl: buildAssetContentUrl,
+})
 
 function json(response, statusCode, payload, extraHeaders = {}) {
   response.writeHead(statusCode, {
@@ -120,6 +136,7 @@ async function readJsonFile(filePath) {
 
 async function ensureDatabase() {
   await mkdir(runtimeDir, { recursive: true })
+  await assetStore.ensureReady()
 
   try {
     await readFile(dbPath, "utf8")
@@ -131,7 +148,10 @@ async function ensureDatabase() {
 
 async function loadDb() {
   await ensureDatabase()
-  return readJsonFile(dbPath)
+  const db = await readJsonFile(dbPath)
+  db.assets = Array.isArray(db.assets) ? db.assets : []
+  db.preferencesByUserId = db.preferencesByUserId ?? {}
+  return db
 }
 
 async function saveDb(db) {
@@ -194,6 +214,62 @@ function findOwnedReport(db, userId, reportId) {
   }
 
   return findOwnedProfile(db, userId, report.profileId) ? report : null
+}
+
+function getReportActionId(pathname, actionSuffix) {
+  if (!pathname.startsWith("/reports/") || !pathname.endsWith(actionSuffix)) {
+    return null
+  }
+
+  return decodeURIComponent(pathname.slice("/reports/".length, -actionSuffix.length))
+}
+
+function buildUpdatedReportSource(report, input) {
+  const nextSource = createMockUploadedReport({
+    profileId: report.profileId,
+    fileName: input.fileName ?? "",
+    examType: input.examType ?? report.examType ?? "Routine",
+    sourceType: input.sourceType === "pdf" ? "pdf" : "image",
+  })
+
+  return {
+    ...report,
+    title: nextSource.title,
+    date: nextSource.date,
+    location: nextSource.location,
+    sceneType: nextSource.sceneType,
+    sourceType: nextSource.sourceType,
+    status: nextSource.status,
+    examType: nextSource.examType,
+    aiAccuracy: nextSource.aiAccuracy,
+    results: nextSource.results,
+    scanScenario: nextSource.scanScenario,
+    scanFailureCode: undefined,
+    scanFailureMessage: undefined,
+    sourceFile: report.sourceFile ?? null,
+    sourceUpdatedAt: nextSource.sourceUpdatedAt,
+    resultsGeneratedAt: undefined,
+  }
+}
+
+function createDraftReport(input) {
+  const examType = input.examType ?? "Routine"
+
+  return {
+    id: `report_upload_${randomUUID().slice(0, 8)}`,
+    profileId: input.profileId,
+    title: "Pending Upload",
+    date: new Date().toISOString(),
+    location: "Awaiting Source",
+    sceneType: examType === "Clinical" ? "INPATIENT" : "ROUTINE",
+    sourceType: "image",
+    status: "processing",
+    examType,
+    aiAccuracy: 0,
+    results: [],
+    isFavorite: false,
+    resultsGeneratedAt: undefined,
+  }
 }
 
 function getFallbackSelection(db, userId) {
@@ -369,6 +445,31 @@ async function requestListener(request, response) {
       return
     }
 
+    if (request.method === "GET" && pathname.startsWith("/assets/") && pathname.endsWith("/content")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const assetId = decodeURIComponent(pathname.slice("/assets/".length, -"/content".length))
+      const asset = assetStore.findOwned(db, currentUserId, assetId)
+
+      if (!asset) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const content = await readFile(asset.filePath)
+      response.writeHead(200, {
+        ...corsHeaders,
+        "Content-Type": asset.mimeType,
+        "Content-Length": content.byteLength,
+        "Cache-Control": "no-store",
+      })
+      response.end(content)
+      return
+    }
+
     if (request.method === "GET" && pathname === "/profiles") {
       json(
         response,
@@ -423,7 +524,78 @@ async function requestListener(request, response) {
       return
     }
 
-    if (request.method === "PATCH" && pathname.startsWith("/profiles/")) {
+    if (request.method === "POST" && pathname.startsWith("/profiles/") && pathname.endsWith("/avatar")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const profileId = decodeURIComponent(pathname.slice("/profiles/".length, -"/avatar".length))
+      const profile = db.profiles.find((item) => item.id === profileId && item.userId === currentUserId)
+
+      if (!profile) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+
+      if (!body.dataUrl) {
+        badRequest(response, "Avatar image payload is required", corsHeaders)
+        return
+      }
+
+      if (profile.avatarAsset?.assetId) {
+        await assetStore.remove(db, profile.avatarAsset.assetId)
+      }
+
+      const avatarAsset = await assetStore.create(request, db, {
+        ownerUserId: currentUserId,
+        entityType: "profile_avatar",
+        entityId: profile.id,
+        fileName: body.fileName ?? `${profile.name || "avatar"}.jpg`,
+        mimeType: body.mimeType,
+        sizeBytes: body.sizeBytes,
+        dataUrl: body.dataUrl,
+      })
+
+      profile.avatarAsset = avatarAsset
+      profile.avatarUrl = avatarAsset.url
+      await saveDb(db)
+      json(response, 200, profile, corsHeaders)
+      return
+    }
+
+    if (request.method === "DELETE" && pathname.startsWith("/profiles/") && pathname.endsWith("/avatar")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const profileId = decodeURIComponent(pathname.slice("/profiles/".length, -"/avatar".length))
+      const profile = db.profiles.find((item) => item.id === profileId && item.userId === currentUserId)
+
+      if (!profile) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      if (profile.avatarAsset?.assetId) {
+        await assetStore.remove(db, profile.avatarAsset.assetId)
+      }
+
+      profile.avatarAsset = null
+      profile.avatarUrl = ""
+      await saveDb(db)
+      json(response, 200, profile, corsHeaders)
+      return
+    }
+
+    if (
+      request.method === "PATCH" &&
+      pathname.startsWith("/profiles/") &&
+      !pathname.endsWith("/avatar")
+    ) {
       if (!currentUserId) {
         unauthorized(response, corsHeaders)
         return
@@ -475,6 +647,18 @@ async function requestListener(request, response) {
         return
       }
 
+      if (profile.avatarAsset?.assetId) {
+        await assetStore.remove(db, profile.avatarAsset.assetId)
+      }
+
+      const profileReportAssets = db.reports
+        .filter((report) => report.profileId === profileId && report.sourceFile?.assetId)
+        .map((report) => report.sourceFile.assetId)
+
+      for (const assetId of profileReportAssets) {
+        await assetStore.remove(db, assetId)
+      }
+
       db.profiles = db.profiles.filter((item) => item.id !== profileId)
       db.reports = db.reports.filter((report) => report.profileId !== profileId)
 
@@ -515,12 +699,18 @@ async function requestListener(request, response) {
         badRequest(response, "Profile does not belong to current user", corsHeaders)
         return
       }
-      const report = createMockUploadedReport({
-        profileId: profile.id,
-        fileName: body.fileName ?? "",
-        examType: body.examType ?? "Routine",
-        sourceType: body.sourceType === "pdf" ? "pdf" : "image",
-      })
+      const report =
+        typeof body.fileName === "string" && body.fileName.trim() !== ""
+          ? createMockUploadedReport({
+              profileId: profile.id,
+              fileName: body.fileName ?? "",
+              examType: body.examType ?? "Routine",
+              sourceType: body.sourceType === "pdf" ? "pdf" : "image",
+            })
+          : createDraftReport({
+              profileId: profile.id,
+              examType: body.examType ?? "Routine",
+            })
 
       db.reports.unshift(report)
       const currentPreferences = getPreferencesForUser(db, currentUserId)
@@ -534,7 +724,100 @@ async function requestListener(request, response) {
       return
     }
 
-    if (request.method === "PATCH" && pathname.startsWith("/reports/") && !pathname.endsWith("/complete") && !pathname.endsWith("/retry") && !pathname.endsWith("/results")) {
+    if (request.method === "POST" && pathname.startsWith("/reports/") && pathname.endsWith("/files")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = getReportActionId(pathname, "/files")
+      const report = reportId ? findOwnedReport(db, currentUserId, reportId) : null
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+
+      if (!body.dataUrl) {
+        badRequest(response, "Report file payload is required", corsHeaders)
+        return
+      }
+
+      if (report.sourceFile?.assetId) {
+        await assetStore.remove(db, report.sourceFile.assetId)
+      }
+
+      const sourceFile = await assetStore.create(request, db, {
+        ownerUserId: currentUserId,
+        entityType: "report_source",
+        entityId: report.id,
+        fileName: body.fileName ?? `${report.title || "report"}.jpg`,
+        mimeType: body.mimeType,
+        sizeBytes: body.sizeBytes,
+        dataUrl: body.dataUrl,
+      })
+
+      report.sourceFile = sourceFile
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (request.method === "DELETE" && pathname.startsWith("/reports/") && pathname.endsWith("/files")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = getReportActionId(pathname, "/files")
+      const report = reportId ? findOwnedReport(db, currentUserId, reportId) : null
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      if (report.sourceFile?.assetId) {
+        await assetStore.remove(db, report.sourceFile.assetId)
+      }
+
+      report.sourceFile = null
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (request.method === "GET" && pathname.startsWith("/reports/") && !pathname.endsWith("/results")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = decodeURIComponent(pathname.slice("/reports/".length))
+      const report = findOwnedReport(db, currentUserId, reportId)
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (
+      request.method === "PATCH" &&
+      pathname.startsWith("/reports/") &&
+      !pathname.endsWith("/files") &&
+      !pathname.endsWith("/source") &&
+      !pathname.endsWith("/favorite") &&
+      !pathname.endsWith("/scan") &&
+      !pathname.endsWith("/complete") &&
+      !pathname.endsWith("/retry") &&
+      !pathname.endsWith("/results")
+    ) {
       if (!currentUserId) {
         unauthorized(response, corsHeaders)
         return
@@ -550,9 +833,8 @@ async function requestListener(request, response) {
 
       const body = await readBody(request)
       const allowedPatch = {
-        title: body.title ?? report.title,
-        location: body.location ?? report.location,
-        isFavorite: body.isFavorite ?? report.isFavorite ?? false,
+        title: typeof body.title === "string" && body.title.trim() !== "" ? body.title.trim() : report.title,
+        location: typeof body.location === "string" && body.location.trim() !== "" ? body.location.trim() : report.location,
       }
 
       Object.assign(report, allowedPatch)
@@ -561,7 +843,16 @@ async function requestListener(request, response) {
       return
     }
 
-    if (request.method === "DELETE" && pathname.startsWith("/reports/") && !pathname.endsWith("/complete") && !pathname.endsWith("/retry") && !pathname.endsWith("/results")) {
+    if (
+      request.method === "DELETE" &&
+      pathname.startsWith("/reports/") &&
+      !pathname.endsWith("/source") &&
+      !pathname.endsWith("/favorite") &&
+      !pathname.endsWith("/scan") &&
+      !pathname.endsWith("/complete") &&
+      !pathname.endsWith("/retry") &&
+      !pathname.endsWith("/results")
+    ) {
       if (!currentUserId) {
         unauthorized(response, corsHeaders)
         return
@@ -573,6 +864,10 @@ async function requestListener(request, response) {
       if (!report) {
         notFound(response, corsHeaders)
         return
+      }
+
+      if (report.sourceFile?.assetId) {
+        await assetStore.remove(db, report.sourceFile.assetId)
       }
 
       db.reports = db.reports.filter((item) => item.id !== reportId)
@@ -590,13 +885,61 @@ async function requestListener(request, response) {
       return
     }
 
-    if (request.method === "POST" && pathname.startsWith("/reports/") && pathname.endsWith("/complete")) {
+    if (request.method === "POST" && pathname.startsWith("/reports/") && pathname.endsWith("/source")) {
       if (!currentUserId) {
         unauthorized(response, corsHeaders)
         return
       }
 
-      const reportId = decodeURIComponent(pathname.slice("/reports/".length, -"/complete".length))
+      const reportId = getReportActionId(pathname, "/source")
+      const report = reportId ? findOwnedReport(db, currentUserId, reportId) : null
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+      Object.assign(report, buildUpdatedReportSource(report, body))
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (request.method === "POST" && pathname.startsWith("/reports/") && pathname.endsWith("/favorite")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = getReportActionId(pathname, "/favorite")
+      const report = reportId ? findOwnedReport(db, currentUserId, reportId) : null
+
+      if (!report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+      report.isFavorite = Boolean(body.isFavorite)
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (
+      request.method === "POST" &&
+      pathname.startsWith("/reports/") &&
+      (pathname.endsWith("/scan") || pathname.endsWith("/complete"))
+    ) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const reportId = pathname.endsWith("/scan")
+        ? getReportActionId(pathname, "/scan")
+        : getReportActionId(pathname, "/complete")
       const report = findOwnedReport(db, currentUserId, reportId)
 
       if (!report) {
@@ -615,7 +958,7 @@ async function requestListener(request, response) {
         return
       }
 
-      const reportId = decodeURIComponent(pathname.slice("/reports/".length, -"/retry".length))
+      const reportId = getReportActionId(pathname, "/retry")
       const report = findOwnedReport(db, currentUserId, reportId)
 
       if (!report) {
@@ -634,7 +977,7 @@ async function requestListener(request, response) {
         return
       }
 
-      const reportId = decodeURIComponent(pathname.slice("/reports/".length, -"/results".length))
+      const reportId = getReportActionId(pathname, "/results")
       const report = findOwnedReport(db, currentUserId, reportId)
 
       if (!report) {
@@ -662,6 +1005,7 @@ async function requestListener(request, response) {
         return
       }
 
+      const generatedAt = new Date().toISOString()
       const report = {
         id: `report_manual_${Date.now()}`,
         profileId: profile.id,
@@ -675,6 +1019,8 @@ async function requestListener(request, response) {
         aiAccuracy: 100,
         results: Array.isArray(body.results) ? body.results : [],
         isFavorite: false,
+        sourceUpdatedAt: generatedAt,
+        resultsGeneratedAt: generatedAt,
       }
 
       db.reports.unshift(report)
@@ -729,6 +1075,10 @@ async function requestListener(request, response) {
   }
 }
 
-createServer(requestListener).listen(port, () => {
-  console.log(`Vitalis Core API listening on http://127.0.0.1:${port}`)
-})
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  createServer(requestListener).listen(port, () => {
+    console.log(`Vitalis Core API listening on http://127.0.0.1:${port}`)
+  })
+}
+
+export { requestListener }

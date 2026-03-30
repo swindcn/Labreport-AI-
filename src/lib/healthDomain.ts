@@ -49,6 +49,21 @@ export type HealthSession = {
   currentUserId: string | null;
 };
 
+export type FileAssetRef = {
+  assetId: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+};
+
+export type AssetUploadInput = {
+  fileName: string;
+  dataUrl: string;
+  mimeType?: string;
+  sizeBytes?: number;
+};
+
 export type Profile = {
   id: string;
   userId: string;
@@ -60,6 +75,7 @@ export type Profile = {
   gender: string;
   note: string;
   avatarUrl?: string;
+  avatarAsset?: FileAssetRef | null;
 };
 
 export type BiomarkerResult = {
@@ -89,6 +105,9 @@ export type Report = {
   scanScenario?: ScanScenario;
   scanFailureCode?: ScanFailureCode;
   scanFailureMessage?: string;
+  sourceFile?: FileAssetRef | null;
+  sourceUpdatedAt?: string;
+  resultsGeneratedAt?: string;
 };
 
 export type HealthUiPreferences = {
@@ -128,9 +147,14 @@ export type CreateUploadedReportInput = {
   fileName: string;
   examType: ExamType;
   sourceType: Exclude<SourceType, "manual">;
+  fileDataUrl?: string;
+  mimeType?: string;
+  sizeBytes?: number;
 };
 
-export type UpdateReportInput = Partial<Pick<Report, "title" | "location" | "isFavorite">>;
+export type AttachReportSourceInput = Omit<CreateUploadedReportInput, "profileId">;
+
+export type UpdateReportInput = Partial<Pick<Report, "title" | "location">>;
 
 export type CreateProfileInput = {
   name: string;
