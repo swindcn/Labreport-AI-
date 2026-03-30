@@ -40,6 +40,11 @@ import {
 } from "@/lib/healthData";
 import { useHealthStore } from "@/lib/healthStore";
 import { RouteLink, type RouteConfig } from "@/lib/hashRouter";
+import {
+  buildArchiveBulkNotice,
+  filterAndSortArchiveReports,
+  groupArchiveReportsByMonth,
+} from "@/lib/reportsArchiveUtils";
 
 const inAppTabs = [
   { label: "HOME", to: "/dashboard" },
@@ -137,11 +142,6 @@ type PendingUploadSelection = {
   fileName: string;
   fileSizeLabel: string;
   previewUrl: string | null;
-};
-
-type ArchiveNotice = {
-  tone: "success" | "warning";
-  message: string;
 };
 
 const MAX_IMAGE_FILE_SIZE_BYTES = 12 * 1024 * 1024;
@@ -1684,49 +1684,15 @@ function ReportsArchivePage() {
   const [manageFailedMode, setManageFailedMode] = useState(false);
   const [selectedFailedIds, setSelectedFailedIds] = useState<string[]>([]);
   const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
-  const [archiveNotice, setArchiveNotice] = useState<ArchiveNotice | null>(null);
+  const [archiveNotice, setArchiveNotice] = useState<ReturnType<typeof buildArchiveBulkNotice> | null>(null);
 
-  const filteredReports = [...derived.reportArchiveItems]
-    .filter((report) => {
-      const normalizedQuery = query.trim().toLowerCase();
-      const matchesQuery =
-        normalizedQuery === "" ||
-        report.title.toLowerCase().includes(normalizedQuery) ||
-        report.location.toLowerCase().includes(normalizedQuery) ||
-        report.examType.toLowerCase().includes(normalizedQuery);
-      const matchesSource =
-        sourceFilter === "all" ||
-        (sourceFilter === "manual" && report.sourceType === "manual") ||
-        (sourceFilter === "uploaded" && report.sourceType !== "manual");
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "ready" && report.status === "READY") ||
-        (statusFilter === "processing" && report.status === "PROCESSING") ||
-        (statusFilter === "failed" && report.status === "FAILED") ||
-        (statusFilter === "favorites" && report.isFavorite);
+  const filteredReports = filterAndSortArchiveReports(derived.reportArchiveItems, {
+    query,
+    sourceFilter,
+    statusFilter,
+  });
 
-      return matchesQuery && matchesSource && matchesStatus;
-    })
-    .sort((left, right) => new Date(right.rawDate).getTime() - new Date(left.rawDate).getTime());
-
-  const groupedReports = filteredReports.reduce(
-    (groups, report) => {
-      const groupLabel = new Intl.DateTimeFormat("en-US", {
-        month: "long",
-        year: "numeric",
-      }).format(new Date(report.rawDate));
-      const existingGroup = groups.find((group) => group.label === groupLabel);
-
-      if (existingGroup) {
-        existingGroup.reports.push(report);
-      } else {
-        groups.push({ label: groupLabel, reports: [report] });
-      }
-
-      return groups;
-    },
-    [] as Array<{ label: string; reports: typeof filteredReports }>,
-  );
+  const groupedReports = groupArchiveReportsByMonth(filteredReports);
   const failedReports = filteredReports.filter((report) => report.status === "FAILED");
 
   useEffect(() => {
@@ -1766,18 +1732,7 @@ function ReportsArchivePage() {
     setIsBulkSubmitting(true);
     void Promise.all(selectedFailedIds.map((reportId) => actions.retryReport(reportId)))
       .then((results) => {
-        const successCount = results.filter(Boolean).length;
-        const failureCount = results.length - successCount;
-
-        if (successCount > 0) {
-          setArchiveNotice({
-            tone: failureCount === 0 ? "success" : "warning",
-            message:
-              failureCount === 0
-                ? `${successCount} failed report${successCount > 1 ? "s" : ""} moved back to processing.`
-                : `${successCount} report${successCount > 1 ? "s" : ""} retried, ${failureCount} failed to retry.`,
-          });
-        }
+        setArchiveNotice(buildArchiveBulkNotice("retry", results));
 
         setSelectedFailedIds([]);
         setManageFailedMode(false);
@@ -1801,18 +1756,7 @@ function ReportsArchivePage() {
     setIsBulkSubmitting(true);
     void Promise.all(selectedFailedIds.map((reportId) => actions.deleteReport(reportId)))
       .then((results) => {
-        const successCount = results.filter(Boolean).length;
-        const failureCount = results.length - successCount;
-
-        if (successCount > 0) {
-          setArchiveNotice({
-            tone: failureCount === 0 ? "success" : "warning",
-            message:
-              failureCount === 0
-                ? `${successCount} failed report${successCount > 1 ? "s" : ""} removed from the archive.`
-                : `${successCount} report${successCount > 1 ? "s" : ""} deleted, ${failureCount} failed to delete.`,
-          });
-        }
+        setArchiveNotice(buildArchiveBulkNotice("delete", results));
 
         setSelectedFailedIds([]);
         setManageFailedMode(false);

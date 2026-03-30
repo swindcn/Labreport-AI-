@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  completeMockScanReport,
+  createMockUploadedReport,
+  retryMockScanReport,
+} from "./scanService.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -107,114 +112,6 @@ function safeUserIdFromEmail(email) {
 
 function createMemberId() {
   return `VC-${randomUUID().slice(0, 8).toUpperCase()}`
-}
-
-function createSimulatedScanResults(examType) {
-  if (examType === "Clinical") {
-    return [
-      {
-        id: `scan_alt_${randomUUID().slice(0, 8)}`,
-        code: "ALT",
-        name: "ALT (Alanine Aminotransferase)",
-        category: "Liver Function",
-        value: 42,
-        unit: "U/L",
-        referenceText: "Ref < 40 U/L",
-        status: "high",
-      },
-      {
-        id: `scan_ast_${randomUUID().slice(0, 8)}`,
-        code: "AST",
-        name: "AST (Aspartate Aminotransferase)",
-        category: "Liver Function",
-        value: 34,
-        unit: "U/L",
-        referenceText: "Ref 10 - 35 U/L",
-        status: "normal",
-      },
-      {
-        id: `scan_cre_${randomUUID().slice(0, 8)}`,
-        code: "CRE",
-        name: "Creatinine",
-        category: "Kidney Function",
-        value: 1.08,
-        unit: "mg/dL",
-        referenceText: "Ref 0.7 - 1.3 mg/dL",
-        status: "normal",
-      },
-      {
-        id: `scan_hba1c_${randomUUID().slice(0, 8)}`,
-        code: "HBA1C",
-        name: "HbA1c",
-        category: "Metabolic",
-        value: 5.7,
-        unit: "%",
-        referenceText: "Ref 4.0 - 5.6%",
-        status: "high",
-      },
-    ]
-  }
-
-  return [
-    {
-      id: `scan_hgb_${randomUUID().slice(0, 8)}`,
-      code: "HGB",
-      name: "Hemoglobin",
-      category: "Blood Count",
-      value: 13.9,
-      unit: "g/dL",
-      referenceText: "Ref 13.5 - 17.5 g/dL",
-      status: "normal",
-    },
-    {
-      id: `scan_wbc_${randomUUID().slice(0, 8)}`,
-      code: "WBC",
-      name: "White Blood Cells",
-      category: "Blood Count",
-      value: 6.2,
-      unit: "10^9/L",
-      referenceText: "Ref 4.0 - 11.0 10^9/L",
-      status: "normal",
-    },
-    {
-      id: `scan_glu_${randomUUID().slice(0, 8)}`,
-      code: "GLU",
-      name: "Glucose",
-      category: "Metabolic",
-      value: 102,
-      unit: "mg/dL",
-      referenceText: "Ref 70 - 99 mg/dL",
-      status: "high",
-    },
-    {
-      id: `scan_bun_${randomUUID().slice(0, 8)}`,
-      code: "BUN",
-      name: "Blood Urea Nitrogen",
-      category: "Kidney Function",
-      value: 14,
-      unit: "mg/dL",
-      referenceText: "Ref 7 - 20 mg/dL",
-      status: "normal",
-    },
-  ]
-}
-
-function stripExtension(fileName) {
-  return `${fileName ?? ""}`.replace(/\.[^/.]+$/, "").trim()
-}
-
-function inferScanScenario(fileName) {
-  const normalized = `${fileName ?? ""}`.toLowerCase()
-
-  if (/(corrupt|damaged|broken|invalid)/.test(normalized)) {
-    return "file_invalid"
-  }
-
-  if (/(ocr|blurry|blur|cropped|unreadable|tilted)/.test(normalized)) {
-    return "ocr_retryable"
-  }
-
-  return "normal"
 }
 
 async function readJsonFile(filePath) {
@@ -618,24 +515,12 @@ async function requestListener(request, response) {
         badRequest(response, "Profile does not belong to current user", corsHeaders)
         return
       }
-
-      const fileName = `${body.fileName ?? ""}`.trim()
-      const sourceType = body.sourceType === "pdf" ? "pdf" : "image"
-      const report = {
-        id: `report_scan_${randomUUID().slice(0, 8)}`,
+      const report = createMockUploadedReport({
         profileId: profile.id,
-        title: stripExtension(fileName) || "Imported Report",
-        date: new Date().toISOString(),
-        location: sourceType === "pdf" ? "Files Import" : "Mobile Upload",
-        sceneType: body.examType === "Clinical" ? "INPATIENT" : "ROUTINE",
-        sourceType,
-        status: "processing",
+        fileName: body.fileName ?? "",
         examType: body.examType ?? "Routine",
-        aiAccuracy: sourceType === "pdf" ? 98.9 : 97.6,
-        results: createSimulatedScanResults(body.examType ?? "Routine"),
-        isFavorite: false,
-        scanScenario: inferScanScenario(fileName),
-      }
+        sourceType: body.sourceType === "pdf" ? "pdf" : "image",
+      })
 
       db.reports.unshift(report)
       const currentPreferences = getPreferencesForUser(db, currentUserId)
@@ -718,28 +603,7 @@ async function requestListener(request, response) {
         notFound(response, corsHeaders)
         return
       }
-
-      if (report.scanScenario === "file_invalid") {
-        report.status = "failed"
-        report.scanFailureCode = "file_invalid"
-        report.scanFailureMessage = "The selected file appears damaged or unsupported. Please upload a cleaner report file."
-        await saveDb(db)
-        json(response, 200, report, corsHeaders)
-        return
-      }
-
-      if (report.scanScenario === "ocr_retryable") {
-        report.status = "failed"
-        report.scanFailureCode = "ocr_failed"
-        report.scanFailureMessage = "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file."
-        await saveDb(db)
-        json(response, 200, report, corsHeaders)
-        return
-      }
-
-      report.status = "ready"
-      delete report.scanFailureCode
-      delete report.scanFailureMessage
+      Object.assign(report, completeMockScanReport(report))
       await saveDb(db)
       json(response, 200, report, corsHeaders)
       return
@@ -758,15 +622,7 @@ async function requestListener(request, response) {
         notFound(response, corsHeaders)
         return
       }
-
-      report.status = "processing"
-
-      if (report.scanScenario === "ocr_retryable") {
-        report.scanScenario = "normal"
-      }
-
-      delete report.scanFailureCode
-      delete report.scanFailureMessage
+      Object.assign(report, retryMockScanReport(report))
       await saveDb(db)
       json(response, 200, report, corsHeaders)
       return
