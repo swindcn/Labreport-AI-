@@ -1,0 +1,50 @@
+{
+  "Response": {
+    "StructuralList": [
+      {
+        "Groups": [
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "血红蛋白(HGB)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "118↓" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "g/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "130-175 g/L" }
+              }
+            ]
+          },
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "白细胞计数(WBC)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "6.2" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "10^9/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "4.0-11.0 10^9/L" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

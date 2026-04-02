@@ -1,0 +1,50 @@
+{
+  "Response": {
+    "StructuralList": [
+      {
+        "Groups": [
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "空腹血糖(GLU)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "6.8↑" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "mmol/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "3.9-6.1 mmol/L" }
+              }
+            ]
+          },
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "肌酐(CRE)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "82" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "umol/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "57-111 umol/L" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -3,15 +3,14 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { loadServerEnv } from "./loadEnv.js"
 import { createLocalAssetStore } from "./assetStore.js"
-import {
-  completeMockScanReport,
-  createMockUploadedReport,
-  retryMockScanReport,
-} from "./scanService.js"
+import { createMockUploadedReport, retryMockScanReport } from "./scanService.js"
+import { mapScanErrorToReport, runReportScan } from "./scanProviders/reportScanProvider.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+loadServerEnv([path.join(__dirname, ".env.api")])
 const configuredDataDir = process.env.API_DATA_DIR
 const configuredRuntimeDir = process.env.API_RUNTIME_DIR
 const configuredSeedPath = process.env.API_SEED_PATH
@@ -63,10 +62,15 @@ function conflict(response, message, extraHeaders = {}) {
 }
 
 function serverError(response, error, extraHeaders = {}) {
-  json(response, 500, {
-    error: "Internal server error",
-    detail: error instanceof Error ? error.message : "Unknown error",
-  }, extraHeaders)
+  json(
+    response,
+    500,
+    {
+      error: "Internal server error",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    },
+    extraHeaders,
+  )
 }
 
 function parseCookies(cookieHeader) {
@@ -114,12 +118,14 @@ function normalizePath(urlString) {
 }
 
 function initialsFromName(name) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "ME"
+  return (
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "ME"
+  )
 }
 
 function safeUserIdFromEmail(email) {
@@ -272,25 +278,12 @@ function createDraftReport(input) {
   }
 }
 
-function getFallbackSelection(db, userId) {
-  const profiles = listProfilesForUser(db, userId)
-  const activeProfileId = profiles[0]?.id ?? ""
-  const selectedReportId =
-    db.reports
-      .filter((report) => report.profileId === activeProfileId)
-      .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())[0]?.id ?? null
-
-  return {
-    activeProfileId,
-    selectedReportId,
-  }
-}
-
 function getSelectionAfterDelete(db, userId, deletedProfileId) {
   const profiles = listProfilesForUser(db, userId)
   const currentPreferences = getPreferencesForUser(db, userId)
   const nextActiveProfileId =
-    currentPreferences.activeProfileId && currentPreferences.activeProfileId !== deletedProfileId &&
+    currentPreferences.activeProfileId &&
+    currentPreferences.activeProfileId !== deletedProfileId &&
     profiles.some((profile) => profile.id === currentPreferences.activeProfileId)
       ? currentPreferences.activeProfileId
       : profiles[0]?.id ?? ""
@@ -666,11 +659,16 @@ async function requestListener(request, response) {
       db.preferencesByUserId[currentUserId] = nextPreferences
 
       await saveDb(db)
-      json(response, 200, {
-        deletedProfileId: profileId,
-        activeProfileId: nextPreferences.activeProfileId,
-        selectedReportId: nextPreferences.selectedReportId,
-      }, corsHeaders)
+      json(
+        response,
+        200,
+        {
+          deletedProfileId: profileId,
+          activeProfileId: nextPreferences.activeProfileId,
+          selectedReportId: nextPreferences.selectedReportId,
+        },
+        corsHeaders,
+      )
       return
     }
 
@@ -699,6 +697,7 @@ async function requestListener(request, response) {
         badRequest(response, "Profile does not belong to current user", corsHeaders)
         return
       }
+
       const report =
         typeof body.fileName === "string" && body.fileName.trim() !== ""
           ? createMockUploadedReport({
@@ -834,7 +833,10 @@ async function requestListener(request, response) {
       const body = await readBody(request)
       const allowedPatch = {
         title: typeof body.title === "string" && body.title.trim() !== "" ? body.title.trim() : report.title,
-        location: typeof body.location === "string" && body.location.trim() !== "" ? body.location.trim() : report.location,
+        location:
+          typeof body.location === "string" && body.location.trim() !== ""
+            ? body.location.trim()
+            : report.location,
       }
 
       Object.assign(report, allowedPatch)
@@ -878,10 +880,15 @@ async function requestListener(request, response) {
         selectedReportId: nextSelectedReportId,
       }
       await saveDb(db)
-      json(response, 200, {
-        deletedReportId: reportId,
-        selectedReportId: nextSelectedReportId,
-      }, corsHeaders)
+      json(
+        response,
+        200,
+        {
+          deletedReportId: reportId,
+          selectedReportId: nextSelectedReportId,
+        },
+        corsHeaders,
+      )
       return
     }
 
@@ -946,7 +953,13 @@ async function requestListener(request, response) {
         notFound(response, corsHeaders)
         return
       }
-      Object.assign(report, completeMockScanReport(report))
+
+      try {
+        Object.assign(report, await runReportScan(db, report))
+      } catch (error) {
+        Object.assign(report, mapScanErrorToReport(report, error))
+      }
+
       await saveDb(db)
       json(response, 200, report, corsHeaders)
       return
@@ -965,6 +978,7 @@ async function requestListener(request, response) {
         notFound(response, corsHeaders)
         return
       }
+
       Object.assign(report, retryMockScanReport(report))
       await saveDb(db)
       json(response, 200, report, corsHeaders)
@@ -985,9 +999,14 @@ async function requestListener(request, response) {
         return
       }
 
-      json(response, 200, {
-        items: report.results,
-      }, corsHeaders)
+      json(
+        response,
+        200,
+        {
+          items: report.results,
+        },
+        corsHeaders,
+      )
       return
     }
 

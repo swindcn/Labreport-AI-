@@ -5,3 +5,7 @@ dist/
 .npm-cache/
 *.tsbuildinfo
 server/data/runtime/
+.env.local
+.env.*.local
+server/.env.api
+server/.env.*

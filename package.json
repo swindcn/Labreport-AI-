@@ -7,13 +7,15 @@
     "dev": "vite",
     "dev:api": "node server/index.js",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "test": "node --test src/lib/scan/mockScanService.test.ts src/lib/reportsArchiveUtils.test.ts src/lib/reportVersionState.test.ts server/assetStore.test.js server/assetsApi.test.js",
+    "test": "node --test src/lib/scan/mockScanService.test.ts src/lib/reportsArchiveUtils.test.ts src/lib/reportVersionState.test.ts server/assetStore.test.js server/assetsApi.test.js server/scanProviders/normalizeExtractDocMulti.test.js server/scanProviders/tencentExtractDocMulti.test.js",
     "preview": "vite preview",
     "start:api": "node server/index.js"
   },
   "dependencies": {
+    "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tencentcloud-sdk-nodejs": "^4.1.204"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
