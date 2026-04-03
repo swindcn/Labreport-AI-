@@ -27,6 +27,8 @@ Vitalis Core 用于帮助用户完成医疗报告上传、OCR/结构化识别、
 - 未保存扫描草稿与 `Save Results` / `Discard` 流程
 - 报告结果人工校正与单条 biomarker 编辑
 - Trends 分类页按最新记录展开查看
+- Biomarker Trends 时间窗口筛选与趋势解读
+- Cross-Biomarker Summary 分类组合摘要
 - 多页 PDF、扫描 debug 落盘与 parser version 状态提示
 - 本地 mock 扫描兜底
 
@@ -37,6 +39,14 @@ Vitalis Core 用于帮助用户完成医疗报告上传、OCR/结构化识别、
 - Report Analysis 支持人工校正 biomarker，当前可编辑 code、name、category、value、unit、reference range、status
 - Reports Archive 与 Trends 页做了多轮信息密度优化：文件名单行省略、状态提示收敛、按钮文本化、趋势分类卡支持默认 5 条和展开更多
 - OCR 规则增强：支持多页 PDF、扫描 debug JSON、parser version 标记，以及病毒抗体类项目（如 `HAV-IgM` / `HDV-IgG` / `HEV-IgM`）的独立映射，避免被错误合并
+
+## **今日更新（2026-04-03）**
+
+- Biomarker Trends 进一步深化为真实趋势分析页，新增 `3M / 6M / 12M / All` 时间窗口切换
+- 趋势详情页支持趋势折线、历史样本值、变化值计算，以及 `Recovered / Stable / Rising / Falling / Improving / Worsening` 等规则解读
+- 新增当前分类摘要指标：`Need Attention`、`Recovering`、`Stable`、`Largest Shift`
+- 新增 `Cross-Biomarker Summary`，在 Biomarker Trends 页面中针对当前分类输出一句组合解读
+- 补充多日期趋势测试数据，覆盖高、低、正常波动，便于验证趋势页的时间窗口、排序和结论逻辑
 
 ## 技术栈
 
@@ -406,6 +416,8 @@ API 抽象位于 src/lib/api/healthApi.ts。
 - 未保存草稿的 Save / Discard
 - Report Analysis 单条结果编辑
 - Trends 分类页默认 5 条与展开更多
+- Biomarker Trends 时间窗口切换与组合摘要
+- 单样本 / 多样本下的趋势解读与空态
 
 ## **默认演示账号**
 
@@ -416,4 +428,4 @@ API 抽象位于 src/lib/api/healthApi.ts。
 
 - 腾讯云字段映射仍需根据真实报告样本持续校正
 - 医疗报告分类仍以规则映射为主，尚未做更深层语义标准化
-- 趋势分析页目前仍以规则聚合和简化图表为主，尚未加入真正的时序筛选与对比视图
+- 趋势分析页已支持基础时间窗口与规则解读，但尚未引入更复杂的统计模型、医生级解释或跨报告对照基线
