@@ -355,6 +355,471 @@
           "status": "normal"
         }
       ]
+    },
+    {
+      "id": "report_trend_20260110",
+      "profileId": "profile_me",
+      "isSaved": true,
+      "title": "Baseline Wellness Panel",
+      "date": "2026-01-10T09:20:00.000Z",
+      "location": "Vitalis Core Lab",
+      "sceneType": "ROUTINE",
+      "sourceType": "pdf",
+      "status": "ready",
+      "examType": "Routine",
+      "aiAccuracy": 98.1,
+      "results": [
+        {
+          "id": "trend_20260110_wbc",
+          "code": "WBC",
+          "name": "White Blood Cell",
+          "category": "CBC Core",
+          "value": 3.6,
+          "unit": "10^9/L",
+          "referenceText": "4.00~10.00",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260110_rbc",
+          "code": "RBC",
+          "name": "Red Blood Cell",
+          "category": "CBC Core",
+          "value": 4.18,
+          "unit": "10^12/L",
+          "referenceText": "4.30~5.80",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260110_hgb",
+          "code": "HGB",
+          "name": "Hemoglobin",
+          "category": "CBC Core",
+          "value": 12.8,
+          "unit": "g/dL",
+          "referenceText": "13.5~17.5",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260110_hct",
+          "code": "HCT",
+          "name": "Hematocrit",
+          "category": "CBC Core",
+          "value": 37.9,
+          "unit": "%",
+          "referenceText": "40.0~50.0",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260110_plt",
+          "code": "PLT",
+          "name": "Platelet Count",
+          "category": "CBC Core",
+          "value": 265,
+          "unit": "10^9/L",
+          "referenceText": "125~350",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260110_alt",
+          "code": "ALT",
+          "name": "ALT (Alanine Aminotransferase)",
+          "category": "Liver Function",
+          "value": 68,
+          "unit": "U/L",
+          "referenceText": "7~40",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_ast",
+          "code": "AST",
+          "name": "AST (Aspartate Aminotransferase)",
+          "category": "Liver Function",
+          "value": 41,
+          "unit": "U/L",
+          "referenceText": "13~35",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 1.08,
+          "unit": "mg/dL",
+          "referenceText": "0.70~1.30",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260110_bun",
+          "code": "BUN",
+          "name": "Blood Urea Nitrogen",
+          "category": "Kidney Function",
+          "value": 18,
+          "unit": "mg/dL",
+          "referenceText": "7~20",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260110_glu",
+          "code": "GLU",
+          "name": "Glucose",
+          "category": "Metabolic",
+          "value": 112,
+          "unit": "mg/dL",
+          "referenceText": "70~99",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_hba1c",
+          "code": "HBA1C",
+          "name": "HbA1c",
+          "category": "Metabolic",
+          "value": 5.9,
+          "unit": "%",
+          "referenceText": "4.0~5.6",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_chol",
+          "code": "CHOL",
+          "name": "Total Cholesterol",
+          "category": "Metabolic",
+          "value": 6.05,
+          "unit": "mmol/L",
+          "referenceText": "3.10~5.70",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_tg",
+          "code": "TG",
+          "name": "Triglycerides",
+          "category": "Metabolic",
+          "value": 2.1,
+          "unit": "mmol/L",
+          "referenceText": "0.40~1.70",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260110_hdl",
+          "code": "HDL-C",
+          "name": "HDL Cholesterol",
+          "category": "Metabolic",
+          "value": 0.96,
+          "unit": "mmol/L",
+          "referenceText": "1.04~1.55",
+          "status": "low"
+        }
+      ]
+    },
+    {
+      "id": "report_trend_20260214",
+      "profileId": "profile_me",
+      "isSaved": true,
+      "title": "Mid-cycle Follow-up",
+      "date": "2026-02-14T08:45:00.000Z",
+      "location": "Vitalis Core Lab",
+      "sceneType": "ROUTINE",
+      "sourceType": "image",
+      "status": "ready",
+      "examType": "Routine",
+      "aiAccuracy": 98.6,
+      "results": [
+        {
+          "id": "trend_20260214_wbc",
+          "code": "WBC",
+          "name": "White Blood Cell",
+          "category": "CBC Core",
+          "value": 4.9,
+          "unit": "10^9/L",
+          "referenceText": "4.00~10.00",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_rbc",
+          "code": "RBC",
+          "name": "Red Blood Cell",
+          "category": "CBC Core",
+          "value": 4.32,
+          "unit": "10^12/L",
+          "referenceText": "4.30~5.80",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_hgb",
+          "code": "HGB",
+          "name": "Hemoglobin",
+          "category": "CBC Core",
+          "value": 13.4,
+          "unit": "g/dL",
+          "referenceText": "13.5~17.5",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260214_hct",
+          "code": "HCT",
+          "name": "Hematocrit",
+          "category": "CBC Core",
+          "value": 40.5,
+          "unit": "%",
+          "referenceText": "40.0~50.0",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_plt",
+          "code": "PLT",
+          "name": "Platelet Count",
+          "category": "CBC Core",
+          "value": 242,
+          "unit": "10^9/L",
+          "referenceText": "125~350",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_alt",
+          "code": "ALT",
+          "name": "ALT (Alanine Aminotransferase)",
+          "category": "Liver Function",
+          "value": 52,
+          "unit": "U/L",
+          "referenceText": "7~40",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260214_ast",
+          "code": "AST",
+          "name": "AST (Aspartate Aminotransferase)",
+          "category": "Liver Function",
+          "value": 34,
+          "unit": "U/L",
+          "referenceText": "13~35",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 0.97,
+          "unit": "mg/dL",
+          "referenceText": "0.70~1.30",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260214_bun",
+          "code": "BUN",
+          "name": "Blood Urea Nitrogen",
+          "category": "Kidney Function",
+          "value": 6,
+          "unit": "mg/dL",
+          "referenceText": "7~20",
+          "status": "low"
+        },
+        {
+          "id": "trend_20260214_glu",
+          "code": "GLU",
+          "name": "Glucose",
+          "category": "Metabolic",
+          "value": 101,
+          "unit": "mg/dL",
+          "referenceText": "70~99",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260214_hba1c",
+          "code": "HBA1C",
+          "name": "HbA1c",
+          "category": "Metabolic",
+          "value": 5.7,
+          "unit": "%",
+          "referenceText": "4.0~5.6",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260214_chol",
+          "code": "CHOL",
+          "name": "Total Cholesterol",
+          "category": "Metabolic",
+          "value": 5.82,
+          "unit": "mmol/L",
+          "referenceText": "3.10~5.70",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260214_tg",
+          "code": "TG",
+          "name": "Triglycerides",
+          "category": "Metabolic",
+          "value": 1.76,
+          "unit": "mmol/L",
+          "referenceText": "0.40~1.70",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260214_hdl",
+          "code": "HDL-C",
+          "name": "HDL Cholesterol",
+          "category": "Metabolic",
+          "value": 1.08,
+          "unit": "mmol/L",
+          "referenceText": "1.04~1.55",
+          "status": "normal"
+        }
+      ]
+    },
+    {
+      "id": "report_trend_20260320",
+      "profileId": "profile_me",
+      "isSaved": true,
+      "title": "Pre-April Review",
+      "date": "2026-03-20T11:10:00.000Z",
+      "location": "Vitalis Core Lab",
+      "sceneType": "ROUTINE",
+      "sourceType": "pdf",
+      "status": "ready",
+      "examType": "Clinical",
+      "aiAccuracy": 99.1,
+      "results": [
+        {
+          "id": "trend_20260320_wbc",
+          "code": "WBC",
+          "name": "White Blood Cell",
+          "category": "CBC Core",
+          "value": 11.8,
+          "unit": "10^9/L",
+          "referenceText": "4.00~10.00",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260320_rbc",
+          "code": "RBC",
+          "name": "Red Blood Cell",
+          "category": "CBC Core",
+          "value": 4.52,
+          "unit": "10^12/L",
+          "referenceText": "4.30~5.80",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_hgb",
+          "code": "HGB",
+          "name": "Hemoglobin",
+          "category": "CBC Core",
+          "value": 14.1,
+          "unit": "g/dL",
+          "referenceText": "13.5~17.5",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_hct",
+          "code": "HCT",
+          "name": "Hematocrit",
+          "category": "CBC Core",
+          "value": 42.2,
+          "unit": "%",
+          "referenceText": "40.0~50.0",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_plt",
+          "code": "PLT",
+          "name": "Platelet Count",
+          "category": "CBC Core",
+          "value": 301,
+          "unit": "10^9/L",
+          "referenceText": "125~350",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_alt",
+          "code": "ALT",
+          "name": "ALT (Alanine Aminotransferase)",
+          "category": "Liver Function",
+          "value": 29,
+          "unit": "U/L",
+          "referenceText": "7~40",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_ast",
+          "code": "AST",
+          "name": "AST (Aspartate Aminotransferase)",
+          "category": "Liver Function",
+          "value": 24,
+          "unit": "U/L",
+          "referenceText": "13~35",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_cre",
+          "code": "CRE",
+          "name": "Creatinine",
+          "category": "Kidney Function",
+          "value": 1.31,
+          "unit": "mg/dL",
+          "referenceText": "0.70~1.30",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260320_bun",
+          "code": "BUN",
+          "name": "Blood Urea Nitrogen",
+          "category": "Kidney Function",
+          "value": 21,
+          "unit": "mg/dL",
+          "referenceText": "7~20",
+          "status": "high"
+        },
+        {
+          "id": "trend_20260320_glu",
+          "code": "GLU",
+          "name": "Glucose",
+          "category": "Metabolic",
+          "value": 95,
+          "unit": "mg/dL",
+          "referenceText": "70~99",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_hba1c",
+          "code": "HBA1C",
+          "name": "HbA1c",
+          "category": "Metabolic",
+          "value": 5.5,
+          "unit": "%",
+          "referenceText": "4.0~5.6",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_chol",
+          "code": "CHOL",
+          "name": "Total Cholesterol",
+          "category": "Metabolic",
+          "value": 5.24,
+          "unit": "mmol/L",
+          "referenceText": "3.10~5.70",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_tg",
+          "code": "TG",
+          "name": "Triglycerides",
+          "category": "Metabolic",
+          "value": 1.32,
+          "unit": "mmol/L",
+          "referenceText": "0.40~1.70",
+          "status": "normal"
+        },
+        {
+          "id": "trend_20260320_hdl",
+          "code": "HDL-C",
+          "name": "HDL Cholesterol",
+          "category": "Metabolic",
+          "value": 1.21,
+          "unit": "mmol/L",
+          "referenceText": "1.04~1.55",
+          "status": "normal"
+        }
+      ]
     }
   ],
   "preferencesByUserId": {

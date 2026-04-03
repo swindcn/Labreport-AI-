@@ -21,6 +21,14 @@ function normalizeHash(hash: string) {
   return path;
 }
 
+export function splitHashPath(path: string) {
+  const [pathname, search = ""] = path.split("?");
+  return {
+    pathname,
+    searchParams: new URLSearchParams(search),
+  };
+}
+
 export function hrefFor(path: string) {
   return `#${path}`;
 }

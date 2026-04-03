@@ -20,6 +20,7 @@ import {
   TextInput,
   ThumbTile,
   TopBar,
+  type Tone,
 } from "@/components/health/primitives";
 import {
   BiomarkerTrendCardList,
@@ -40,7 +41,7 @@ import {
   profileMenu,
 } from "@/lib/healthData";
 import { useHealthStore } from "@/lib/healthStore";
-import { RouteLink, type RouteConfig } from "@/lib/hashRouter";
+import { RouteLink, splitHashPath, useHashPath, type RouteConfig } from "@/lib/hashRouter";
 import {
   buildArchiveBulkNotice,
   filterAndSortArchiveReports,
@@ -57,6 +58,9 @@ const inAppTabs = [
 
 const PROFILE_FORM_RETURN_KEY = "vitalis-profile-form-return-path";
 const REPORT_SOURCE_RETURN_KEY = "vitalis-report-source-return-path";
+const trendWindowOptions = ["3M", "6M", "12M", "All"] as const;
+
+type TrendWindow = (typeof trendWindowOptions)[number];
 
 function setProfileFormReturnPath(path: string) {
   window.sessionStorage.setItem(PROFILE_FORM_RETURN_KEY, path);
@@ -240,6 +244,207 @@ function formatDateOnlyLabel(value?: string) {
 
 function openFileUrl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function setHashSearchParams(nextPathname: string, nextParams: URLSearchParams) {
+  const query = nextParams.toString();
+  window.location.hash = `#${nextPathname}${query ? `?${query}` : ""}`;
+}
+
+function getWindowStartFromAnchor(anchorDate: string | undefined, window: TrendWindow) {
+  if (!anchorDate || window === "All") {
+    return null;
+  }
+
+  const months = Number.parseInt(window, 10);
+
+  if (!Number.isFinite(months)) {
+    return null;
+  }
+
+  const nextDate = new Date(anchorDate);
+  nextDate.setMonth(nextDate.getMonth() - months);
+  return nextDate;
+}
+
+function formatTrendDelta(delta: number) {
+  return `${delta >= 0 ? "+" : ""}${delta.toFixed(Math.abs(delta) >= 10 ? 0 : 2).replace(/\.00$/, "")}`;
+}
+
+function deriveTrendInsight(
+  history: Array<{ numericValue: number; status: "normal" | "high" | "low" }>,
+): { label: string; text: string; tone: Tone } {
+  if (history.length < 2) {
+    return {
+      label: "Limited",
+      text: "Only one saved sample is available in this window.",
+      tone: "neutral",
+    };
+  }
+
+  const latest = history[history.length - 1];
+  const previous = history[history.length - 2];
+  const delta = latest.numericValue - previous.numericValue;
+  const absoluteDelta = Math.abs(delta);
+  const denominator = Math.max(Math.abs(previous.numericValue), 1);
+  const relativeDelta = absoluteDelta / denominator;
+
+  if (latest.status === "normal" && previous.status !== "normal") {
+    return {
+      label: "Recovered",
+      text: "Latest reading returned to the reference range within this time window.",
+      tone: "success",
+    };
+  }
+
+  if (latest.status === "high") {
+    if (previous.status === "high" && delta > 0) {
+      return {
+        label: "Worsening",
+        text: "Result remains above range and is moving higher than the prior saved sample.",
+        tone: "danger",
+      };
+    }
+
+    if (previous.status === "high" && delta <= 0) {
+      return {
+        label: "Improving",
+        text: "Result is still above range, but it is trending down versus the prior sample.",
+        tone: "warning",
+      };
+    }
+
+    return {
+      label: "Elevated",
+      text: "Latest saved sample is above the reference range and should stay under review.",
+      tone: "danger",
+    };
+  }
+
+  if (latest.status === "low") {
+    if (previous.status === "low" && delta < 0) {
+      return {
+        label: "Worsening",
+        text: "Result remains below range and is moving lower than the prior saved sample.",
+        tone: "danger",
+      };
+    }
+
+    if (previous.status === "low" && delta >= 0) {
+      return {
+        label: "Improving",
+        text: "Result is still below range, but it is moving upward versus the prior sample.",
+        tone: "warning",
+      };
+    }
+
+    return {
+      label: "Low",
+      text: "Latest saved sample is below the reference range and should stay under review.",
+      tone: "warning",
+    };
+  }
+
+  if (relativeDelta < 0.05) {
+    return {
+      label: "Stable",
+      text: "Saved samples in this window stay within a narrow band without meaningful drift.",
+      tone: "accent",
+    };
+  }
+
+  return {
+    label: delta > 0 ? "Rising" : "Falling",
+    text:
+      delta > 0
+        ? "Values are moving upward across the saved samples in this window."
+        : "Values are moving downward across the saved samples in this window.",
+    tone: "accent",
+  };
+}
+
+function getTrendPresentation(status: "normal" | "high" | "low") {
+  if (status === "high") {
+    return { state: "ELEVATED", tone: "danger" as const };
+  }
+
+  if (status === "low") {
+    return { state: "LOW", tone: "warning" as const };
+  }
+
+  return { state: "NORMAL", tone: "success" as const };
+}
+
+function getTrendStatePriority(state: string) {
+  if (state === "ELEVATED" || state === "LOW") {
+    return 0;
+  }
+
+  if (state === "NORMAL") {
+    return 1;
+  }
+
+  return 2;
+}
+
+function getInsightPriority(label?: string) {
+  if (label === "Worsening" || label === "Elevated" || label === "Low") {
+    return 0;
+  }
+
+  if (label === "Recovered" || label === "Improving") {
+    return 1;
+  }
+
+  if (label === "Rising" || label === "Falling") {
+    return 2;
+  }
+
+  if (label === "Stable") {
+    return 3;
+  }
+
+  return 4;
+}
+
+function buildCategorySummary({
+  category,
+  biomarkerCount,
+  actionableCount,
+  recoveringCount,
+  stableCount,
+  strongestShiftItem,
+}: {
+  category: string;
+  biomarkerCount: number;
+  actionableCount: number;
+  recoveringCount: number;
+  stableCount: number;
+  strongestShiftItem: { label?: string; changeLabel?: string } | null;
+}) {
+  if (!category || biomarkerCount === 0) {
+    return "No saved biomarker samples are available for this category yet.";
+  }
+
+  if (actionableCount === 0) {
+    if (stableCount > 0) {
+      return `${category} is currently in range across ${biomarkerCount} tracked biomarkers, with ${stableCount} remaining stable.`;
+    }
+
+    return `${category} is currently in range across ${biomarkerCount} tracked biomarkers.`;
+  }
+
+  const parts = [`${category} currently has ${actionableCount} flagged ${actionableCount === 1 ? "biomarker" : "biomarkers"}`];
+
+  if (recoveringCount > 0) {
+    parts.push(`${recoveringCount} moving back toward range`);
+  }
+
+  if (strongestShiftItem?.label && strongestShiftItem?.changeLabel) {
+    parts.push(`largest shift in ${strongestShiftItem.label} (${strongestShiftItem.changeLabel})`);
+  }
+
+  return `${parts.join(", ")}.`;
 }
 
 function ScreensIndexPage() {
@@ -1921,31 +2126,237 @@ function TrendsPage() {
 
 function BiomarkerTrendsPage() {
   const { derived } = useHealthStore();
+  const hashPath = useHashPath();
+  const { pathname, searchParams } = splitHashPath(hashPath);
+  const selectedCategory = searchParams.get("category") ?? "";
+  const selectedWindow = searchParams.get("window") ?? "";
+  const activeWindow = trendWindowOptions.includes(selectedWindow as TrendWindow)
+    ? (selectedWindow as TrendWindow)
+    : "All";
+  const categoryOptions = Array.from(new Set(derived.biomarkerTrendItems.map((item) => item.category)));
+  const latestObservedDate = derived.biomarkerTrendItems
+    .flatMap((item) => item.history.map((entry) => entry.rawDate))
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+  const windowStartDate = getWindowStartFromAnchor(latestObservedDate, activeWindow);
+  const activeCategory =
+    selectedCategory && categoryOptions.includes(selectedCategory) ? selectedCategory : categoryOptions[0] ?? "";
+  const filteredItems = (activeCategory
+    ? derived.biomarkerTrendItems.filter((item) => item.category === activeCategory)
+    : derived.biomarkerTrendItems)
+    .flatMap((item) => {
+      const history = item.history.filter(
+        (entry) => !windowStartDate || new Date(entry.rawDate).getTime() >= windowStartDate.getTime(),
+      );
+
+      if (!history.length) {
+        return [];
+      }
+
+      const firstEntry = history[0];
+      const latestEntry = history[history.length - 1];
+      const delta = latestEntry.numericValue - firstEntry.numericValue;
+      const trendPresentation = getTrendPresentation(latestEntry.status);
+      const insight = deriveTrendInsight(history);
+
+      return [
+        {
+          ...item,
+          values: history.map((entry) => entry.numericValue),
+          latestValue: latestEntry.value,
+          latestDate: latestEntry.date,
+          startDate: firstEntry.date,
+          sampleCount: history.length,
+          changeLabel: history.length < 2 ? "Single sample" : `Δ ${formatTrendDelta(delta)}`,
+          state: trendPresentation.state,
+          tone: trendPresentation.tone,
+          insightLabel: insight.label,
+          insightText: insight.text,
+          insightTone: insight.tone,
+          history,
+        },
+      ];
+    })
+    .sort((left, right) => {
+      const statePriority = getTrendStatePriority(left.state) - getTrendStatePriority(right.state);
+
+      if (statePriority !== 0) {
+        return statePriority;
+      }
+
+      const insightPriority = getInsightPriority(left.insightLabel) - getInsightPriority(right.insightLabel);
+
+      if (insightPriority !== 0) {
+        return insightPriority;
+      }
+
+      const leftDelta = left.history.length > 1
+        ? Math.abs(left.history[left.history.length - 1].numericValue - left.history[0].numericValue)
+        : -1;
+      const rightDelta = right.history.length > 1
+        ? Math.abs(right.history[right.history.length - 1].numericValue - right.history[0].numericValue)
+        : -1;
+
+      if (rightDelta !== leftDelta) {
+        return rightDelta - leftDelta;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+  const categorySummary = filteredItems.length;
+  const actionableCount = filteredItems.filter((item) => item.state !== "NORMAL").length;
+  const recoveringCount = filteredItems.filter(
+    (item) => item.insightLabel === "Recovered" || item.insightLabel === "Improving",
+  ).length;
+  const stableCount = filteredItems.filter((item) => item.insightLabel === "Stable").length;
+  const strongestShiftItem = filteredItems.reduce<typeof filteredItems[number] | null>((currentStrongest, item) => {
+    if (item.history.length < 2) {
+      return currentStrongest;
+    }
+
+    const shift = Math.abs(item.history[item.history.length - 1].numericValue - item.history[0].numericValue);
+    const strongestShift = currentStrongest
+      ? Math.abs(
+          currentStrongest.history[currentStrongest.history.length - 1].numericValue -
+            currentStrongest.history[0].numericValue,
+        )
+      : -1;
+
+    return shift > strongestShift ? item : currentStrongest;
+  }, null);
+  const categorySummaryText = buildCategorySummary({
+    category: activeCategory,
+    biomarkerCount: categorySummary,
+    actionableCount,
+    recoveringCount,
+    stableCount,
+    strongestShiftItem,
+  });
+
+  const handleSelectCategory = (category: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("category", category);
+    if (activeWindow !== "All") {
+      nextParams.set("window", activeWindow);
+    } else {
+      nextParams.delete("window");
+    }
+    setHashSearchParams(pathname, nextParams);
+  };
+
+  const handleSelectWindow = (windowValue: TrendWindow) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (activeCategory) {
+      nextParams.set("category", activeCategory);
+    }
+    if (windowValue === "All") {
+      nextParams.delete("window");
+    } else {
+      nextParams.set("window", windowValue);
+    }
+    setHashSearchParams(pathname, nextParams);
+  };
 
   return (
     <PhoneFrame header={<TopBar left={<RouteLink to="/trends">←</RouteLink>} title="Biomarker Trends" />}>
+      {categoryOptions.length > 0 ? (
+        <div className="flex gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {categoryOptions.map((category) => (
+            <button
+              key={category}
+              type="button"
+              onClick={() => handleSelectCategory(category)}
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${
+                category === activeCategory ? "bg-[#1E40AF] text-white" : "bg-white text-slate-500"
+              }`}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="flex gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {trendWindowOptions.map((windowValue) => (
+          <button
+            key={windowValue}
+            type="button"
+            onClick={() => handleSelectWindow(windowValue)}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${
+              windowValue === activeWindow ? "bg-[#dbe7ff] text-[#1E40AF]" : "bg-white text-slate-500"
+            }`}
+          >
+            {windowValue}
+          </button>
+        ))}
+      </div>
+
+      <Card className="bg-[#eef4ff]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm text-slate-500">Active Category</p>
+            <h3 className="mt-2 text-[1.5rem] font-semibold tracking-[-0.03em] text-slate-900">
+              {activeCategory || "No category"}
+            </h3>
+          </div>
+          <div className="text-right text-sm text-slate-500">
+            <p>{categorySummary} biomarkers</p>
+            <p className="mt-1">{actionableCount} flagged</p>
+          </div>
+        </div>
+      </Card>
+
       <div className="px-1">
-        <h2 className="text-[2.1rem] font-semibold leading-[1] tracking-[-0.04em] text-slate-900">
-          Biomarker Trends
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
-          See longitudinal tracking of your core biochemical markers.
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+          Cross-Biomarker Summary
         </p>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{categorySummaryText}</p>
       </div>
 
-      <div className="flex gap-2 px-1">
-        <Chip label="Optimal Range" tone="success" />
-        <Chip label="Action Required" tone="danger" />
-      </div>
+      {filteredItems.length > 0 ? (
+        <div className="grid grid-cols-2 gap-3 px-1">
+          <MetricCard
+            label="Need Attention"
+            value={`${actionableCount}`}
+          />
+          <MetricCard
+            label="Recovering"
+            value={`${recoveringCount}`}
+          />
+          <MetricCard
+            label="Stable"
+            value={`${stableCount}`}
+          />
+          <div className="rounded-[1.5rem] border border-white/80 bg-white px-4 py-4 shadow-[0_18px_40px_rgba(90,102,158,0.08)]">
+            <p className="text-xs font-medium text-slate-500">Largest Shift</p>
+            <div className="mt-2 flex items-baseline justify-between gap-3">
+              <p className="text-xl font-semibold tracking-tight text-slate-950">
+                {strongestShiftItem?.label ?? "None"}
+              </p>
+              {strongestShiftItem?.changeLabel ? (
+                <p className="text-base font-semibold text-slate-500">{strongestShiftItem.changeLabel}</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
-      <BiomarkerTrendCardList items={derived.biomarkerTrendItems} />
+      {filteredItems.length > 0 ? (
+        <BiomarkerTrendCardList items={filteredItems} />
+      ) : (
+        <Card className="bg-[#f8fbff]">
+          <h3 className="text-[1.2rem] font-semibold text-slate-900">No saved samples in this window</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            Try a wider time range or switch to another category to review longer-term biomarker movement.
+          </p>
+        </Card>
+      )}
 
       <Card className="bg-[#dfeaff]">
         <h3 className="text-[1.5rem] font-semibold leading-[1.05] tracking-[-0.03em] text-slate-900">
           Long-term Health Trajectory
         </h3>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          {derived.currentProfile.name}'s tracked biomarkers are rendered from the shared app store. As more reports are added, this panel updates automatically from the same underlying measurement timeline.
+          {derived.currentProfile.name}'s tracked biomarkers are rendered from saved reports only. Switch categories and time windows to compare what is recovering, drifting, or staying stable inside the same clinical domain.
         </p>
       </Card>
     </PhoneFrame>
@@ -2889,5 +3300,6 @@ export const screenRoutes: RouteConfig[] = [
 ];
 
 export function getRouteElement(path: string) {
-  return screenRoutes.find((route) => route.path === path)?.element ?? <NotFoundPage />;
+  const { pathname } = splitHashPath(path);
+  return screenRoutes.find((route) => route.path === pathname)?.element ?? <NotFoundPage />;
 }

@@ -74,10 +74,27 @@ export type MonthlyTrendItem = {
 
 export type BiomarkerTrendCardItem = {
   label: string;
+  category: string;
   range: string;
+  unit: string;
   state: string;
   tone: Tone;
   values: number[];
+  latestValue: string;
+  latestDate: string;
+  startDate: string;
+  sampleCount: number;
+  changeLabel: string;
+  insightLabel?: string;
+  insightText?: string;
+  insightTone?: Tone;
+  history: Array<{
+    rawDate: string;
+    date: string;
+    numericValue: number;
+    value: string;
+    status: "normal" | "high" | "low";
+  }>;
 };
 
 export type ReportBiomarkerRowItem = {
@@ -110,6 +127,14 @@ export type ManualBiomarkerItem = {
   code: string;
   name: string;
   unit: string;
+};
+
+export type CombinedInsightItem = {
+  id: string;
+  title: string;
+  summary: string;
+  tone: Tone;
+  trendTo: string;
 };
 
 export type ProfileMenuGroupItem = {
@@ -418,6 +443,33 @@ export function HealthCategoryList({
   );
 }
 
+export function CombinedInsightList({
+  items,
+}: {
+  items: CombinedInsightItem[];
+}) {
+  return (
+    <div className="mt-4 space-y-3">
+      {items.map((item) => (
+        <RouteLink key={item.id} to={item.trendTo} className="block">
+          <Card>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <CircleIcon label={item.title.slice(0, 2).toUpperCase()} tone={item.tone} />
+                <div>
+                  <p className="font-semibold text-slate-900">{item.title}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">{item.summary}</p>
+                </div>
+              </div>
+              <span className="shrink-0 text-sm font-semibold text-[#1E40AF]">Open</span>
+            </div>
+          </Card>
+        </RouteLink>
+      ))}
+    </div>
+  );
+}
+
 function HealthCategoryCard({ item }: { item: HealthCategoryItem }) {
   const [expanded, setExpanded] = useState(false);
   const visibleRows = expanded ? item.rows : item.rows.slice(0, 5);
@@ -526,16 +578,48 @@ export function BiomarkerTrendCardList({
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[1.1rem] font-semibold text-slate-900">{item.label}</p>
-              <p className="mt-1 text-sm text-slate-500">{item.range}</p>
+              <p className="mt-1 text-sm text-slate-500">{item.category}</p>
             </div>
             <Chip label={item.state} tone={item.tone} />
           </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-slate-400">Latest</p>
+              <p className="mt-1 font-semibold text-slate-900">{item.latestValue}</p>
+              <p className="mt-1 text-slate-500">{item.latestDate}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-slate-400">Reference</p>
+              <p className="mt-1 font-semibold text-slate-900">{item.range}</p>
+              <p className="mt-1 text-slate-500">{item.sampleCount} samples</p>
+            </div>
+          </div>
+          {item.sampleCount > 1 && item.insightLabel && item.insightText ? (
+            <div className="mt-4 rounded-[1rem] border border-[#dbe4fb] bg-white px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Trend Insight</p>
+                <Chip label={item.insightLabel} tone={item.insightTone ?? "accent"} />
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{item.insightText}</p>
+            </div>
+          ) : null}
           <div className="mt-4 rounded-[1.2rem] bg-[#f6f8ff] px-3 py-3">
             <MiniBarChart values={item.values} tone={item.tone as Tone} />
             <div className="mt-3 flex justify-between text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              <span>Jan</span>
-              <span>Feb</span>
-              <span>Current</span>
+              <span>{item.startDate}</span>
+              <span>{item.changeLabel}</span>
+              <span>{item.latestDate}</span>
+            </div>
+            <div className="mt-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {item.history.map((entry) => (
+                <div
+                  key={`${item.label}-${entry.date}`}
+                  className="min-w-[4.5rem] shrink-0 rounded-[0.9rem] border border-[#dbe4fb] bg-white px-3 py-2 text-center"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{entry.date}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{entry.value}</p>
+                </div>
+              ))}
             </div>
           </div>
         </Card>

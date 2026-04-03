@@ -9,6 +9,7 @@ import {
 } from "react";
 import type {
   BiomarkerTrendCardItem,
+  CombinedInsightItem,
   FamilyProfileItem,
   HealthCategoryItem,
   MonthlyTrendItem,
@@ -817,6 +818,70 @@ function statusToText(status: BiomarkerStatus) {
   return "NORMAL";
 }
 
+function formatLabelList(labels: string[]) {
+  if (labels.length <= 1) {
+    return labels[0] ?? "";
+  }
+
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function buildCombinedInsightSummary({
+  title,
+  biomarkerCount,
+  flaggedCodes,
+  improvingCount,
+  worseningCount,
+  stableCount,
+}: {
+  title: string;
+  biomarkerCount: number;
+  flaggedCodes: string[];
+  improvingCount: number;
+  worseningCount: number;
+  stableCount: number;
+}) {
+  const leadingCodes = flaggedCodes.slice(0, 3);
+
+  if (flaggedCodes.length === 0) {
+    if (stableCount > 0) {
+      return `${title} is currently within range across ${biomarkerCount} tracked biomarkers, with ${stableCount} remaining stable across recent samples.`;
+    }
+
+    return `${title} is currently within range across ${biomarkerCount} tracked biomarkers on the latest saved report.`;
+  }
+
+  let summary = `${title} has ${flaggedCodes.length} flagged ${
+    flaggedCodes.length === 1 ? "biomarker" : "biomarkers"
+  } in the latest saved report`;
+
+  if (leadingCodes.length > 0) {
+    summary += `, led by ${formatLabelList(leadingCodes)}`;
+  }
+
+  if (worseningCount > 0 && improvingCount > 0) {
+    summary += `; ${improvingCount} improving while ${worseningCount} continue to drift.`;
+    return summary;
+  }
+
+  if (worseningCount > 0) {
+    summary += `; ${worseningCount} ${worseningCount === 1 ? "marker is" : "markers are"} drifting further out of range.`;
+    return summary;
+  }
+
+  if (improvingCount > 0) {
+    summary += `; ${improvingCount} ${improvingCount === 1 ? "marker is" : "markers are"} moving back toward range.`;
+    return summary;
+  }
+
+  summary += ".";
+  return summary;
+}
+
 function sceneToTag(sceneType: SceneType) {
   return sceneType;
 }
@@ -970,7 +1035,7 @@ function deriveStoreData(state: HealthAppState) {
       title: category,
       subtitle: `${results.length} biomarker${results.length > 1 ? "s" : ""}`,
       tone: latest ? statusToTone(latest.status) : "success",
-      trendTo: "/biomarker-trends",
+      trendTo: `/biomarker-trends?category=${encodeURIComponent(category)}`,
       rows: results.map(({ result, reportDate }) => ({
         id: `${category}:${result.code}`,
         label: result.code,
@@ -1006,28 +1071,160 @@ function deriveStoreData(state: HealthAppState) {
     },
   ];
 
-  const biomarkerMap = new Map<string, BiomarkerResult[]>();
+  const biomarkerMap = new Map<string, Array<{ result: BiomarkerResult; reportDate: string }>>();
   [...savedProfileReports].reverse().forEach((report) => {
     report.results.forEach((result) => {
       const values = biomarkerMap.get(result.code) ?? [];
-      values.push(result);
+      values.push({
+        result,
+        reportDate: report.date,
+      });
       biomarkerMap.set(result.code, values);
     });
   });
 
-  const biomarkerTrendItems: BiomarkerTrendCardItem[] = Array.from(biomarkerMap.entries())
-    .slice(0, 5)
-    .map(([code, results]) => {
-      const latest = results[results.length - 1];
+  const biomarkerTrendItems: BiomarkerTrendCardItem[] = Array.from(biomarkerMap.entries()).flatMap(([code, results]) => {
+      const latest = results[results.length - 1]?.result;
+      const first = results[0]?.result;
 
-      return {
+      if (!latest) {
+        return [];
+      }
+
+      const delta =
+        first && Number.isFinite(first.value) ? latest.value - first.value : null;
+
+      return [{
         label: code,
+        category: latest.category,
         range: latest.referenceText,
+        unit: latest.unit,
         state: latest.status === "normal" ? "NORMAL" : latest.status === "high" ? "ELEVATED" : "LOW",
         tone: statusToTone(latest.status),
-        values: results.map((result) => result.value),
-      };
+        values: results.map((entry) => entry.result.value),
+        latestValue: `${latest.value} ${latest.unit}`.trim(),
+        latestDate: formatCompactDateLabel(results[results.length - 1].reportDate),
+        startDate: formatCompactDateLabel(results[0].reportDate),
+        sampleCount: results.length,
+        changeLabel:
+          delta === null
+            ? "Single sample"
+            : `Δ ${delta >= 0 ? "+" : ""}${delta.toFixed(Math.abs(delta) >= 10 ? 0 : 2).replace(/\.00$/, "")}`,
+        history: results.map((entry) => ({
+          rawDate: entry.reportDate,
+          date: formatCompactDateLabel(entry.reportDate),
+          numericValue: entry.result.value,
+          value: `${entry.result.value}${entry.result.unit ? ` ${entry.result.unit}` : ""}`.trim(),
+          status: entry.result.status,
+        })),
+      }];
     });
+
+  const combinedInsightGroups: Array<{
+    id: string;
+    title: string;
+    categories: string[];
+  }> = [
+    {
+      id: "cbc",
+      title: "CBC",
+      categories: ["CBC Core", "CBC Differential"],
+    },
+    {
+      id: "liver",
+      title: "Liver Function",
+      categories: ["Liver Function"],
+    },
+    {
+      id: "metabolic",
+      title: "Metabolic",
+      categories: ["Metabolic"],
+    },
+    {
+      id: "kidney",
+      title: "Kidney Function",
+      categories: ["Kidney Function"],
+    },
+  ];
+
+  const combinedInsights: CombinedInsightItem[] = combinedInsightGroups.flatMap((group) => {
+    const latestResults = group.categories.flatMap((category) => categoryMap.get(category) ?? []);
+
+    if (!latestResults.length) {
+      return [];
+    }
+
+    const trendItems = biomarkerTrendItems.filter((item) => group.categories.includes(item.category));
+    const flaggedCodes = latestResults
+      .filter(({ result }) => result.status !== "normal")
+      .map(({ result }) => result.code);
+    const improvingCount = trendItems.filter((item) => {
+      if (item.history.length < 2) {
+        return false;
+      }
+
+      const latestStatus = item.history[item.history.length - 1]?.status;
+      const previousStatus = item.history[item.history.length - 2]?.status;
+      return latestStatus === "normal" && previousStatus && previousStatus !== "normal";
+    }).length;
+    const worseningCount = trendItems.filter((item) => {
+      if (item.history.length < 2) {
+        return false;
+      }
+
+      const latest = item.history[item.history.length - 1];
+      const previous = item.history[item.history.length - 2];
+
+      if (latest.status === "high") {
+        return previous.status === "high"
+          ? latest.numericValue > previous.numericValue
+          : previous.status === "normal";
+      }
+
+      if (latest.status === "low") {
+        return previous.status === "low"
+          ? latest.numericValue < previous.numericValue
+          : previous.status === "normal";
+      }
+
+      return false;
+    }).length;
+    const stableCount = trendItems.filter((item) => {
+      if (item.history.length < 2) {
+        return false;
+      }
+
+      const latest = item.history[item.history.length - 1];
+      const previous = item.history[item.history.length - 2];
+      const denominator = Math.max(Math.abs(previous.numericValue), 1);
+
+      return latest.status === "normal"
+        && previous.status === "normal"
+        && Math.abs(latest.numericValue - previous.numericValue) / denominator < 0.05;
+    }).length;
+
+    return [
+      {
+        id: group.id,
+        title: group.title,
+        summary: buildCombinedInsightSummary({
+          title: group.title,
+          biomarkerCount: latestResults.length,
+          flaggedCodes,
+          improvingCount,
+          worseningCount,
+          stableCount,
+        }),
+        tone:
+          flaggedCodes.length > 0
+            ? worseningCount > 0
+              ? "danger"
+              : "accent"
+            : "success",
+        trendTo: `/biomarker-trends?category=${encodeURIComponent(group.categories[0])}`,
+      },
+    ];
+  });
 
   const reportBiomarkerGroups: ReportBiomarkerGroupItem[] = selectedReport
     ? Array.from(
@@ -1076,6 +1273,7 @@ function deriveStoreData(state: HealthAppState) {
     recentRecordItems,
     reportArchiveItems,
     healthCategoryItems,
+    combinedInsights,
     biomarkerTrendItems,
     reportBiomarkerGroups,
     monthlyTrendItems,

@@ -420,21 +420,82 @@ export function MiniBarChart({
   values: number[];
   tone: Tone;
 }) {
+  if (values.length === 0) {
+    return (
+      <div className="flex h-56 items-center justify-center rounded-[1rem] bg-[linear-gradient(180deg,rgba(255,255,255,0.75),rgba(241,245,255,0.95))] text-sm font-medium text-slate-400">
+        No trend data
+      </div>
+    );
+  }
+
+  const width = 320;
+  const height = 160;
+  const paddingX = 12;
+  const paddingY = 12;
+  const chartWidth = width - paddingX * 2;
+  const chartHeight = height - paddingY * 2;
+  const min = Math.min(...values);
   const max = Math.max(...values);
-  const barColor = tone === "danger" ? "bg-[#e02424]" : "bg-[#1E40AF]";
+  const range = max - min || Math.max(Math.abs(max), 1);
+  const yMin = min - range * 0.15;
+  const yMax = max + range * 0.15;
+  const normalizedRange = yMax - yMin || 1;
+  const stroke = tone === "danger" ? "#ef4444" : tone === "success" ? "#16a34a" : "#1E40AF";
+  const fill = tone === "danger" ? "rgba(239,68,68,0.12)" : tone === "success" ? "rgba(22,163,74,0.12)" : "rgba(30,64,175,0.12)";
+
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? width / 2 : paddingX + (chartWidth * index) / (values.length - 1);
+    const y = paddingY + ((yMax - value) / normalizedRange) * chartHeight;
+    return { x, y, value };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1]?.x ?? width - paddingX} ${height - paddingY} L ${
+    points[0]?.x ?? paddingX
+  } ${height - paddingY} Z`;
 
   return (
-    <div className="flex h-28 items-end gap-6 px-2">
-      {values.map((value, index) => (
-        <div key={`${value}-${index}`} className="flex flex-1 items-end">
-          <div
-            className={`w-full rounded-t-[0.7rem] ${
-              index === values.length - 1 ? barColor : "bg-[#e6edf8]"
-            }`}
-            style={{ height: `${(value / max) * 100}%` }}
-          />
-        </div>
-      ))}
+    <div className="h-56 rounded-[1rem] bg-[linear-gradient(180deg,rgba(255,255,255,0.75),rgba(241,245,255,0.95))] px-2 py-2">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="img" aria-hidden="true">
+        <line x1={paddingX} y1={paddingY} x2={width - paddingX} y2={paddingY} stroke="#dbe4fb" strokeWidth="1" />
+        <line
+          x1={paddingX}
+          y1={height / 2}
+          x2={width - paddingX}
+          y2={height / 2}
+          stroke="#e5edfb"
+          strokeWidth="1"
+          strokeDasharray="3 4"
+        />
+        <line
+          x1={paddingX}
+          y1={height - paddingY}
+          x2={width - paddingX}
+          y2={height - paddingY}
+          stroke="#dbe4fb"
+          strokeWidth="1"
+        />
+        {points.length > 1 ? <path d={areaPath} fill={fill} /> : null}
+        <path d={linePath} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((point, index) => (
+          <g key={`${point.value}-${index}`}>
+            <circle cx={point.x} cy={point.y} r={index === points.length - 1 ? 9 : 7} fill="white" fillOpacity={0.32} />
+            <circle cx={point.x} cy={point.y} r={index === points.length - 1 ? 5 : 4} fill={stroke} />
+            <text
+              x={point.x}
+              y={Math.max(14, point.y - 10)}
+              textAnchor="middle"
+              fontSize="10"
+              fontWeight="700"
+              fill={stroke}
+            >
+              {Number.isInteger(point.value) ? point.value : point.value.toFixed(point.value >= 10 ? 1 : 2).replace(/0$/, "").replace(/\.$/, "")}
+            </text>
+          </g>
+        ))}
+      </svg>
     </div>
   );
 }
