@@ -431,3 +431,43 @@ test("profile deletion cleans avatar and linked report assets", async () => {
     await server.stop();
   }
 });
+
+test("report result patch updates a single biomarker result", async () => {
+  const server = await startServer();
+
+  try {
+    const cookie = await login(server.baseUrl);
+
+    const updateResult = await requestJson(
+      server.baseUrl,
+      "/api/reports/report_1/results/r1_alt",
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ALT (Edited)",
+          category: "Liver Review",
+          value: 41.2,
+          unit: "U/L",
+          referenceText: "Ref < 35 U/L",
+          status: "high",
+        }),
+      },
+      cookie,
+    );
+
+    assert.equal(updateResult.response.status, 200);
+
+    const editedResult = updateResult.payload.results.find((item) => item.id === "r1_alt");
+    assert.ok(editedResult);
+    assert.equal(editedResult.name, "ALT (Edited)");
+    assert.equal(editedResult.category, "Liver Review");
+    assert.equal(editedResult.value, 41.2);
+    assert.equal(editedResult.referenceText, "Ref < 35 U/L");
+    assert.equal(editedResult.status, "high");
+  } finally {
+    await server.stop();
+  }
+});

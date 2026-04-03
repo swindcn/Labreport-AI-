@@ -7,6 +7,7 @@ import { loadServerEnv } from "./loadEnv.js"
 import { createLocalAssetStore } from "./assetStore.js"
 import { createMockUploadedReport, retryMockScanReport } from "./scanService.js"
 import { mapScanErrorToReport, runReportScan } from "./scanProviders/reportScanProvider.js"
+import { CURRENT_SCAN_PARSER_VERSION } from "./scanProviders/scanParserVersion.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -230,9 +231,23 @@ function getReportActionId(pathname, actionSuffix) {
   return decodeURIComponent(pathname.slice("/reports/".length, -actionSuffix.length))
 }
 
+function getReportResultAction(pathname) {
+  const match = pathname.match(/^\/reports\/([^/]+)\/results\/([^/]+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    reportId: decodeURIComponent(match[1]),
+    resultId: decodeURIComponent(match[2]),
+  }
+}
+
 function buildUpdatedReportSource(report, input) {
   const nextSource = createMockUploadedReport({
     profileId: report.profileId,
+    batchId: report.batchId,
     fileName: input.fileName ?? "",
     examType: input.examType ?? report.examType ?? "Routine",
     sourceType: input.sourceType === "pdf" ? "pdf" : "image",
@@ -255,6 +270,7 @@ function buildUpdatedReportSource(report, input) {
     sourceFile: report.sourceFile ?? null,
     sourceUpdatedAt: nextSource.sourceUpdatedAt,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   }
 }
 
@@ -264,6 +280,8 @@ function createDraftReport(input) {
   return {
     id: `report_upload_${randomUUID().slice(0, 8)}`,
     profileId: input.profileId,
+    batchId: input.batchId,
+    isSaved: false,
     title: "Pending Upload",
     date: new Date().toISOString(),
     location: "Awaiting Source",
@@ -275,6 +293,7 @@ function createDraftReport(input) {
     results: [],
     isFavorite: false,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   }
 }
 
@@ -702,12 +721,14 @@ async function requestListener(request, response) {
         typeof body.fileName === "string" && body.fileName.trim() !== ""
           ? createMockUploadedReport({
               profileId: profile.id,
+              batchId: body.batchId,
               fileName: body.fileName ?? "",
               examType: body.examType ?? "Routine",
               sourceType: body.sourceType === "pdf" ? "pdf" : "image",
             })
           : createDraftReport({
               profileId: profile.id,
+              batchId: body.batchId,
               examType: body.examType ?? "Routine",
             })
 
@@ -809,6 +830,54 @@ async function requestListener(request, response) {
     if (
       request.method === "PATCH" &&
       pathname.startsWith("/reports/") &&
+      pathname.includes("/results/")
+    ) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const action = getReportResultAction(pathname)
+      const report = action ? findOwnedReport(db, currentUserId, action.reportId) : null
+
+      if (!action || !report) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const result = report.results.find((item) => item.id === action.resultId)
+
+      if (!result) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+
+      Object.assign(result, {
+        code: typeof body.code === "string" && body.code.trim() !== "" ? body.code.trim() : result.code,
+        name: typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : result.name,
+        category: typeof body.category === "string" && body.category.trim() !== "" ? body.category.trim() : result.category,
+        value: Number.isFinite(Number(body.value)) ? Number(body.value) : result.value,
+        unit: typeof body.unit === "string" && body.unit.trim() !== "" ? body.unit.trim() : result.unit,
+        referenceText:
+          typeof body.referenceText === "string" && body.referenceText.trim() !== ""
+            ? body.referenceText.trim()
+            : result.referenceText,
+        status:
+          body.status === "normal" || body.status === "high" || body.status === "low"
+            ? body.status
+            : result.status,
+      })
+
+      await saveDb(db)
+      json(response, 200, report, corsHeaders)
+      return
+    }
+
+    if (
+      request.method === "PATCH" &&
+      pathname.startsWith("/reports/") &&
       !pathname.endsWith("/files") &&
       !pathname.endsWith("/source") &&
       !pathname.endsWith("/favorite") &&
@@ -837,6 +906,7 @@ async function requestListener(request, response) {
           typeof body.location === "string" && body.location.trim() !== ""
             ? body.location.trim()
             : report.location,
+        isSaved: typeof body.isSaved === "boolean" ? body.isSaved : report.isSaved,
       }
 
       Object.assign(report, allowedPatch)
@@ -1028,6 +1098,7 @@ async function requestListener(request, response) {
       const report = {
         id: `report_manual_${Date.now()}`,
         profileId: profile.id,
+        isSaved: true,
         title: body.title ?? "Manual Entry",
         date: new Date(body.date ?? new Date().toISOString()).toISOString(),
         location: "Manual Entry",
@@ -1040,6 +1111,7 @@ async function requestListener(request, response) {
         isFavorite: false,
         sourceUpdatedAt: generatedAt,
         resultsGeneratedAt: generatedAt,
+        scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
       }
 
       db.reports.unshift(report)

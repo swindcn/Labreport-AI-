@@ -38,6 +38,7 @@ import type {
   ProfileDraftState,
   Report,
   SceneType,
+  UpdateBiomarkerResultInput,
   UpdateReportInput,
 } from "@/lib/healthDomain";
 
@@ -752,10 +753,11 @@ function createManualReportInput(state: HealthAppState): CreateManualReportInput
 
 function createUploadedReportInput(
   state: HealthAppState,
-  input: Pick<CreateUploadedReportInput, "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">,
+  input: Pick<CreateUploadedReportInput, "batchId" | "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">,
 ): CreateUploadedReportInput {
   return {
     profileId: state.activeProfileId,
+    batchId: input.batchId,
     fileName: input.fileName,
     examType: state.scanSession.examType,
     sourceType: input.sourceType,
@@ -771,6 +773,24 @@ function formatDateLabel(date: string) {
     day: "2-digit",
     year: "numeric",
   }).format(new Date(date));
+}
+
+function formatDateTimeLabel(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(date));
+}
+
+function formatCompactDateLabel(date: string) {
+  const value = new Date(date)
+  const year = value.getFullYear()
+  const month = `${value.getMonth() + 1}`.padStart(2, "0")
+  const day = `${value.getDate()}`.padStart(2, "0")
+  return `${year}.${month}.${day}`
 }
 
 function formatAssetSize(sizeBytes?: number) {
@@ -820,9 +840,17 @@ function deriveStoreData(state: HealthAppState) {
   const profileReports = [...state.reports]
     .filter((report) => report.profileId === currentProfile.id)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const savedProfileReports = profileReports.filter((report) => report.isSaved !== false);
 
   const selectedReport =
     profileReports.find((report) => report.id === state.selectedReportId) ?? profileReports[0] ?? null;
+  const selectedReportBatchReports = selectedReport?.batchId
+    ? profileReports
+        .filter((report) => report.batchId === selectedReport.batchId)
+        .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+    : selectedReport
+      ? [selectedReport]
+      : [];
 
   const familyProfileItems: FamilyProfileItem[] = state.profiles.map((profile) => ({
     id: profile.id,
@@ -831,7 +859,7 @@ function deriveStoreData(state: HealthAppState) {
     accent: profile.id === state.activeProfileId,
   }));
 
-  const recentRecordItems: RecentRecordItem[] = profileReports.slice(0, 3).map((report) => {
+  const recentRecordItems: RecentRecordItem[] = savedProfileReports.slice(0, 3).map((report) => {
     const versionState = getReportVersionState(report);
 
     return {
@@ -854,7 +882,7 @@ function deriveStoreData(state: HealthAppState) {
     };
   });
 
-  const reportArchiveItems: ReportArchiveItem[] = profileReports.map((report) => {
+  const reportArchiveItems: ReportArchiveItem[] = savedProfileReports.map((report) => {
     const versionState = getReportVersionState(report);
 
     return {
@@ -891,34 +919,76 @@ function deriveStoreData(state: HealthAppState) {
     };
   });
 
-  const categoryMap = new Map<string, BiomarkerResult[]>();
-  profileReports.flatMap((report) => report.results).forEach((result) => {
-    const list = categoryMap.get(result.category) ?? [];
-    list.push(result);
-    categoryMap.set(result.category, list);
+  const categoryMap = new Map<
+    string,
+    Array<{
+      result: BiomarkerResult;
+      reportDate: string;
+    }>
+  >();
+  const latestCategoryResultMap = new Map<
+    string,
+    Map<
+      string,
+      {
+        result: BiomarkerResult;
+        reportDate: string;
+      }
+    >
+  >();
+  savedProfileReports.forEach((report) => {
+    report.results.forEach((result) => {
+      const categoryResults =
+        latestCategoryResultMap.get(result.category) ??
+        new Map<
+          string,
+          {
+            result: BiomarkerResult;
+            reportDate: string;
+          }
+        >();
+
+      if (!categoryResults.has(result.code)) {
+        categoryResults.set(result.code, {
+          result,
+          reportDate: report.date,
+        });
+      }
+
+      latestCategoryResultMap.set(result.category, categoryResults);
+    });
   });
 
-  const healthCategoryItems: HealthCategoryItem[] = Array.from(categoryMap.entries())
-    .slice(0, 4)
-    .map(([category, results]) => {
-      const latest = results[0];
-      const biomarkers = new Set(results.map((result) => result.code)).size;
+  latestCategoryResultMap.forEach((resultsByCode, category) => {
+    categoryMap.set(category, [...resultsByCode.values()]);
+  });
 
-      return {
-        title: category,
-        subtitle: `${biomarkers} biomarker${biomarkers > 1 ? "s" : ""}`,
-        marker: latest.name.replace(/\s*\(.+\)/, ""),
-        reading: `${latest.value} ${latest.unit}`,
-        status: statusToText(latest.status),
-        tone: statusToTone(latest.status),
-      };
-    });
+  const healthCategoryItems: HealthCategoryItem[] = Array.from(categoryMap.entries()).map(([category, results]) => {
+    const latest = results[0]?.result;
+
+    return {
+      title: category,
+      subtitle: `${results.length} biomarker${results.length > 1 ? "s" : ""}`,
+      tone: latest ? statusToTone(latest.status) : "success",
+      trendTo: "/biomarker-trends",
+      rows: results.map(({ result, reportDate }) => ({
+        id: `${category}:${result.code}`,
+        label: result.code,
+        value: `${result.value}`,
+        unit: result.unit || "—",
+        reference: result.referenceText || "—",
+        observedDate: formatCompactDateLabel(reportDate),
+        state: result.status === "normal" ? "NORMAL" : result.status === "high" ? "HIGH" : "LOW",
+        tone: statusToTone(result.status),
+      })),
+    };
+  });
 
   const monthlyTrendItems: MonthlyTrendItem[] = [
     {
       label: "Inflammation Index",
-      status: profileReports.some((report) => report.sceneType === "INPATIENT") ? "Elevated" : "Low",
-      tone: profileReports.some((report) => report.sceneType === "INPATIENT") ? "warning" : "success",
+      status: savedProfileReports.some((report) => report.sceneType === "INPATIENT") ? "Elevated" : "Low",
+      tone: savedProfileReports.some((report) => report.sceneType === "INPATIENT") ? "warning" : "success",
     },
     {
       label: "Cardiovascular Load",
@@ -927,17 +997,17 @@ function deriveStoreData(state: HealthAppState) {
     },
     {
       label: "Hydration",
-      status: selectedReport?.results.some((result) => result.code === "BUN" && result.status === "low")
+      status: savedProfileReports[0]?.results.some((result) => result.code === "BUN" && result.status === "low")
         ? "Watch"
         : "Stable",
-      tone: selectedReport?.results.some((result) => result.code === "BUN" && result.status === "low")
+      tone: savedProfileReports[0]?.results.some((result) => result.code === "BUN" && result.status === "low")
         ? "warning"
         : "accent",
     },
   ];
 
   const biomarkerMap = new Map<string, BiomarkerResult[]>();
-  [...profileReports].reverse().forEach((report) => {
+  [...savedProfileReports].reverse().forEach((report) => {
     report.results.forEach((result) => {
       const values = biomarkerMap.get(result.code) ?? [];
       values.push(result);
@@ -961,23 +1031,43 @@ function deriveStoreData(state: HealthAppState) {
 
   const reportBiomarkerGroups: ReportBiomarkerGroupItem[] = selectedReport
     ? Array.from(
-        selectedReport.results.reduce((map, result) => {
-          const list = map.get(result.category) ?? [];
-          list.push(result);
-          map.set(result.category, list);
-          return map;
-        }, new Map<string, BiomarkerResult[]>()),
-      ).map(([category, results]) => ({
-        section: category,
-        count: `${results.length} biomarkers`,
-        rows: results.map((result) => ({
-          name: result.name,
-          ref: result.referenceText,
-          value: `${result.value} ${result.unit}`,
-          tone: statusToTone(result.status),
-          tag: statusToText(result.status),
+        selectedReportBatchReports.reduce((dateMap, report) => {
+          const dateKey = selectedReportBatchReports.length > 1 ? formatDateTimeLabel(report.date) : "";
+          const categoryMap = dateMap.get(dateKey) ?? new Map<string, Array<{ report: Report; result: BiomarkerResult }>>();
+
+          report.results.forEach((result) => {
+            const list = categoryMap.get(result.category) ?? [];
+            list.push({ report, result });
+            categoryMap.set(result.category, list);
+          });
+
+          dateMap.set(dateKey, categoryMap);
+          return dateMap;
+        }, new Map<string, Map<string, Array<{ report: Report; result: BiomarkerResult }>>>()),
+      ).flatMap(([dateKey, categoryMap]) =>
+        Array.from(categoryMap.entries()).map(([category, items], index) => ({
+          id: `${dateKey || "single"}:${category}`,
+          groupLabel: dateKey && index === 0 ? dateKey : undefined,
+          section: category,
+          count: `${items.length} biomarkers`,
+          rows: items.map(({ report, result }) => ({
+            id: `${report.id}:${result.id}`,
+            reportId: report.id,
+            resultId: result.id,
+            code: result.code,
+            name: result.name,
+            category: result.category,
+            numericValue: result.value,
+            unit: result.unit,
+            referenceText: result.referenceText,
+            status: result.status,
+            ref: result.referenceText,
+            value: `${result.value} ${result.unit}`.trim(),
+            tone: statusToTone(result.status),
+            tag: statusToText(result.status),
+          })),
         })),
-      }))
+      )
     : [];
 
   return {
@@ -990,6 +1080,7 @@ function deriveStoreData(state: HealthAppState) {
     reportBiomarkerGroups,
     monthlyTrendItems,
     selectedReport,
+    selectedReportBatchReports,
   };
 }
 
@@ -1015,6 +1106,9 @@ type HealthStoreValue = {
     setProfileDraftField: (field: keyof ProfileDraft, value: string) => void;
     saveProfile: () => Promise<boolean>;
     saveSelectedReport: () => Promise<boolean>;
+    discardSelectedUnsavedReportBatch: () => Promise<boolean>;
+    updateReportResult: (reportId: string, resultId: string, patch: UpdateBiomarkerResultInput) => Promise<boolean>;
+    updateSelectedReportResult: (resultId: string, patch: UpdateBiomarkerResultInput) => Promise<boolean>;
     updateReport: (reportId: string, patch: UpdateReportInput) => Promise<boolean>;
     updateSelectedReport: (patch: UpdateReportInput) => Promise<boolean>;
     setReportFavorite: (reportId: string, isFavorite: boolean) => Promise<boolean>;
@@ -1024,7 +1118,7 @@ type HealthStoreValue = {
     setScanExamType: (examType: ExamType) => void;
     setScanProgress: (progress: number) => void;
     startScan: () => void;
-    createUploadedReport: (input: Pick<CreateUploadedReportInput, "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">) => Promise<boolean>;
+    createUploadedReport: (input: Pick<CreateUploadedReportInput, "batchId" | "fileName" | "sourceType" | "fileDataUrl" | "mimeType" | "sizeBytes">) => Promise<boolean>;
     uploadReportFile: (reportId: string, input: { fileName: string; fileDataUrl: string; mimeType?: string; sizeBytes?: number }) => Promise<boolean>;
     replaceReportSource: (
       reportId: string,
@@ -1154,6 +1248,21 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
         return true;
       } catch (error: unknown) {
         setSyncError(error instanceof Error ? error.message : "Failed to update report");
+        return false;
+      }
+    };
+    const updateReportResult = async (reportId: string, resultId: string, patch: UpdateBiomarkerResultInput) => {
+      if (!reportId || !resultId) {
+        return false;
+      }
+
+      try {
+        const report = await api.reports.updateResult(reportId, resultId, patch);
+        dispatch({ type: "reports/updateSuccess", report });
+        setSyncError(null);
+        return true;
+      } catch (error: unknown) {
+        setSyncError(error instanceof Error ? error.message : "Failed to update report result");
         return false;
       }
     };
@@ -1433,14 +1542,33 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
             day: "2-digit",
             year: "numeric",
           }).format(new Date());
+          const selectedReport = state.reports.find((report) => report.id === state.selectedReportId);
+          const targetReports =
+            selectedReport?.batchId
+              ? state.reports.filter((report) => report.batchId === selectedReport.batchId)
+              : selectedReport
+                ? [selectedReport]
+                : [];
 
-          dispatch({ type: "reports/save", reportId: state.selectedReportId, savedAt });
+          if (targetReports.length === 0) {
+            setSyncError("No report is selected.");
+            return false;
+          }
 
           try {
+            const updatedReports = await Promise.all(
+              targetReports.map((report) => api.reports.update(report.id, { isSaved: true })),
+            );
+
+            updatedReports.forEach((report) => {
+              dispatch({ type: "reports/updateSuccess", report });
+              dispatch({ type: "reports/save", reportId: report.id, savedAt });
+            });
+
             await api.clientState.update({
               reportSavedAt: {
                 ...pickClientState(state).reportSavedAt,
-                [state.selectedReportId]: savedAt,
+                ...Object.fromEntries(targetReports.map((report) => [report.id, savedAt])),
               },
             });
             setSyncError(null);
@@ -1449,6 +1577,60 @@ export function HealthStoreProvider({ children }: PropsWithChildren) {
             setSyncError(error instanceof Error ? error.message : "Failed to save report state");
             return false;
           }
+        },
+        discardSelectedUnsavedReportBatch: async () => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          const selectedReport = state.reports.find((report) => report.id === state.selectedReportId);
+
+          if (!selectedReport) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          const targetReports = selectedReport.batchId
+            ? state.reports.filter((report) => report.batchId === selectedReport.batchId && report.isSaved === false)
+            : selectedReport.isSaved === false
+              ? [selectedReport]
+              : [];
+
+          if (targetReports.length === 0) {
+            setSyncError("Current report has already been saved.");
+            return false;
+          }
+
+          try {
+            for (const report of targetReports) {
+              const payload = await api.reports.delete(report.id);
+              dispatch({ type: "reports/deleteSuccess", payload });
+            }
+
+            const nextReportSavedAt = { ...pickClientState(state).reportSavedAt };
+            targetReports.forEach((report) => {
+              delete nextReportSavedAt[report.id];
+            });
+
+            await api.clientState.update({
+              reportSavedAt: nextReportSavedAt,
+            });
+            setSyncError(null);
+            return true;
+          } catch (error: unknown) {
+            setSyncError(error instanceof Error ? error.message : "Failed to discard report draft");
+            return false;
+          }
+        },
+        updateReportResult,
+        updateSelectedReportResult: async (resultId, patch) => {
+          if (!state.selectedReportId) {
+            setSyncError("No report is selected.");
+            return false;
+          }
+
+          return updateReportResult(state.selectedReportId, resultId, patch);
         },
         updateReport,
         updateSelectedReport: async (patch) => {

@@ -66,6 +66,26 @@ function cleanNumericText(value) {
     .trim()
 }
 
+function cleanLabelText(value) {
+  return `${value ?? ""}`
+    .replace(/[★☆•·]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function canonicalizeCode(value) {
+  const normalized = `${value ?? ""}`.trim().replace(/0/g, "O")
+
+  if (normalized === "CREA") return "CRE"
+  if (normalized === "GLO") return "GLB"
+  if (normalized === "Na") return "NA"
+  if (normalized === "Cl") return "CL"
+  if (normalized === "Ca") return "CA"
+  if (normalized === "Mg") return "MG"
+
+  return normalized
+}
+
 function toNumber(value) {
   if (typeof value === "number") {
     return value
@@ -146,37 +166,54 @@ function inferStatus(value, referenceText, rawValue) {
 }
 
 function resolveCodeAndName(name) {
-  const metadata = matchBiomarkerMetadata(name)
+  const cleanedName = cleanLabelText(name)
+  const metadata = matchBiomarkerMetadata(cleanedName)
 
   if (metadata) {
     return {
-      code: metadata.code,
+      code: canonicalizeCode(metadata.code),
       name: metadata.name,
       category: metadata.category,
+      referenceText: metadata.referenceText ?? "",
     }
   }
 
-  const codeMatch = `${name}`.match(/\(([A-Z0-9-]+)\)/)
-  const normalizedName = `${name}`.replace(/\s+/g, " ").trim()
+  const codeMatch =
+    cleanedName.match(/[\[【(（]([A-Z][A-Z0-9/+.-]{0,11})[\]】)）]/) ||
+    cleanedName.match(/\b([A-Z][A-Z0-9/+.-]{1,11})\b/)
+  const normalizedName = cleanedName.replace(/\s+/g, " ").trim()
 
   return {
-    code: codeMatch?.[1] || normalizedName.toUpperCase(),
+    code: canonicalizeCode(codeMatch?.[1] || normalizedName.toUpperCase()),
     name: normalizedName,
     category: null,
+    referenceText: "",
   }
 }
 
 function fallbackCategory(name, examType) {
-  const text = `${name ?? ""}`.toUpperCase()
+  const text = cleanLabelText(name).toUpperCase().replace(/0/g, "O")
 
-  if (/(ALT|AST|ALP|GGT|TBIL|ALB|TP|胆红素|白蛋白|总蛋白)/.test(text)) return "Liver Function"
-  if (/(CRE|CR|BUN|UA|EGFR|肌酐|尿素氮|尿酸)/.test(text)) return "Kidney Function"
+  if (text.includes("/") && !/A\/G/.test(text)) {
+    return examType === "Clinical" ? "Clinical Other" : "Other"
+  }
+
+  if (/(ALT|AST|ALP|GGT|TBIL|DBIL|IBIL|ALB|TP|GLB|A\/G|CHE|LAP|胆红素|白蛋白|总蛋白|球蛋白|转氨酶|酯酶)/.test(text)) {
+    return "Liver Function"
+  }
+  if (/(UREA|CREA|CRE|CR|BUN|UA|URIC|EGFR|肌酐|尿素氮|尿素|尿酸)/.test(text)) return "Kidney Function"
   if (/(GLU|HBA1C|TC|TG|LDL|HDL|血糖|葡萄糖|胆固醇)/.test(text)) return "Metabolic"
-  if (/(WBC|RBC|HGB|HCT|PLT|白细胞|红细胞|血红蛋白|血小板)/.test(text)) return "Blood Count"
+  if (/(MPV|PDW|P-LCC|PLT|血小板|大血小板|平均血小板|血小板比容)/.test(text)) return "Platelet Indices"
+  if (/(MCV|MCH|MCHC|RDW|红细胞体积分布宽度|平均红细胞体积|平均红细胞血红蛋白)/.test(text)) return "Red Cell Indices"
+  if (/(NEUT|LYMPH|MONO|EOS|BASO|中性粒细胞|淋巴细胞|单核细胞|嗜酸性粒细胞|嗜碱性粒细胞|异型淋巴细胞)/.test(text)) {
+    return "CBC Differential"
+  }
+  if (/(WBC|RBC|HGB|HCT|NRBC|白细胞|红细胞|血红蛋白|有核红细胞)/.test(text)) return "CBC Core"
   if (/(TSH|FT3|FT4|甲状腺)/.test(text)) return "Endocrine"
-  if (/(NA|K|CL|CA|钠|钾|氯|钙)/.test(text)) return "Electrolytes"
+  if (/(NA|K|CL|CA|MG|P|AG|OSM|HCO3|钠|钾|氯|钙|镁|磷|阴离子间隙|渗透压|碳酸氢盐)/.test(text)) return "Electrolytes"
+  if (/(PA|PREALBUMIN|前白蛋白)/.test(text)) return "Nutrition"
 
-  return examType === "Clinical" ? "Clinical Panel" : "Routine Panel"
+  return examType === "Clinical" ? "Clinical Other" : "Other"
 }
 
 function mergeDuplicateResults(results) {
@@ -209,7 +246,7 @@ export function normalizeExtractDocMulti(rawResponse, { examType }) {
 
   const results = rows
     .map((fields) => {
-      const rawName = getFieldValue(fields, ["项目名称", "检查项目", "指标名称", "名称", "项目"])
+      const rawName = getFieldValue(fields, ["项目名称", "检验项目", "检查项目", "指标名称", "名称", "项目"])
       const rawValue = getFieldValue(fields, ["结果", "检测结果", "数值", "结果值"])
       const unit = getFieldValue(fields, ["单位"])
       const referenceText = getFieldValue(fields, ["参考范围", "参考值", "参考区间", "正常范围"])
@@ -220,6 +257,7 @@ export function normalizeExtractDocMulti(rawResponse, { examType }) {
       }
 
       const resolved = resolveCodeAndName(rawName)
+      const normalizedReferenceText = `${referenceText}`.trim() || resolved.referenceText || ""
 
       return {
         id: `scan_${randomUUID().slice(0, 8)}`,
@@ -228,8 +266,8 @@ export function normalizeExtractDocMulti(rawResponse, { examType }) {
         category: resolved.category || fallbackCategory(rawName, examType),
         value,
         unit: `${unit}`.trim(),
-        referenceText: `${referenceText}`.trim(),
-        status: inferStatus(value, referenceText, rawValue),
+        referenceText: normalizedReferenceText,
+        status: inferStatus(value, normalizedReferenceText, rawValue),
       }
     })
     .filter(Boolean)

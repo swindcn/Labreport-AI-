@@ -1,0 +1,1 @@
+export const CURRENT_SCAN_PARSER_VERSION = "2026-04-02-cbc-v2"

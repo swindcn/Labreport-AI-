@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { CURRENT_SCAN_PARSER_VERSION } from "./scanProviders/scanParserVersion.js"
 
 function createSimulatedScanResults(examType) {
   if (examType === "Clinical") {
@@ -118,6 +119,8 @@ export function createMockUploadedReport(input) {
   return {
     id: `report_scan_${randomUUID().slice(0, 8)}`,
     profileId: input.profileId,
+    batchId: input.batchId,
+    isSaved: false,
     title: baseTitle || "Imported Report",
     date: new Date().toISOString(),
     location: input.sourceType === "pdf" ? "Files Import" : "Mobile Upload",
@@ -131,6 +134,7 @@ export function createMockUploadedReport(input) {
     scanScenario,
     sourceUpdatedAt,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   }
 }
 
@@ -142,6 +146,7 @@ export function completeMockScanReport(report) {
       scanFailureCode: "file_invalid",
       scanFailureMessage: "The selected file appears damaged or unsupported. Please upload a cleaner report file.",
       resultsGeneratedAt: new Date().toISOString(),
+      scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
     }
   }
 
@@ -152,6 +157,7 @@ export function completeMockScanReport(report) {
       scanFailureCode: "ocr_failed",
       scanFailureMessage: "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file.",
       resultsGeneratedAt: new Date().toISOString(),
+      scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
     }
   }
 
@@ -161,6 +167,7 @@ export function completeMockScanReport(report) {
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
     resultsGeneratedAt: new Date().toISOString(),
+    scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
   }
 }
 
@@ -172,5 +179,6 @@ export function retryMockScanReport(report) {
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   }
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Chip } from "@/components/ui/Chip";
 import { RouteLink } from "@/lib/hashRouter";
 import {
@@ -51,10 +52,18 @@ export type ReportArchiveItem = {
 export type HealthCategoryItem = {
   title: string;
   subtitle: string;
-  marker: string;
-  reading: string;
-  status: string;
   tone: Tone;
+  trendTo: string;
+  rows: Array<{
+    id: string;
+    label: string;
+    value: string;
+    unit: string;
+    reference: string;
+    observedDate: string;
+    state: string;
+    tone: Tone;
+  }>;
 };
 
 export type MonthlyTrendItem = {
@@ -72,7 +81,17 @@ export type BiomarkerTrendCardItem = {
 };
 
 export type ReportBiomarkerRowItem = {
+  id: string;
+  reportId: string;
+  resultId: string;
+  code: string;
   name: string;
+  meta?: string;
+  category: string;
+  numericValue: number;
+  unit: string;
+  referenceText: string;
+  status: "normal" | "high" | "low";
   ref: string;
   value: string;
   tone: Tone;
@@ -80,6 +99,8 @@ export type ReportBiomarkerRowItem = {
 };
 
 export type ReportBiomarkerGroupItem = {
+  id: string;
+  groupLabel?: string;
   section: string;
   count: string;
   rows: ReportBiomarkerRowItem[];
@@ -196,11 +217,13 @@ export function RecentRecordsSection({
           >
             <Card>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <CircleIcon label={record.title.slice(0, 2).toUpperCase()} tone="accent" />
-                  <div>
-                    <p className="font-semibold text-slate-900">{record.title}</p>
-                    <p className="mt-1 text-sm text-slate-500">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900" title={record.title}>
+                      {record.title}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-slate-500">
                       {record.date} • {record.location}
                     </p>
                   </div>
@@ -273,7 +296,6 @@ export function ReportArchiveList({
                               : "text-[#1E40AF]"
                       }`}>
                         {report.versionLabel}
-                        {report.versionDetail ? ` • ${report.versionDetail}` : ""}
                       </p>
                     ) : null}
                     {report.isFavorite ? (
@@ -334,7 +356,6 @@ export function ReportArchiveList({
                             : "text-[#1E40AF]"
                     }`}>
                       {report.versionLabel}
-                      {report.versionDetail ? ` • ${report.versionDetail}` : ""}
                     </p>
                   ) : null}
                   {report.isFavorite ? (
@@ -357,7 +378,7 @@ export function ReportArchiveList({
             <div className="mt-4 grid grid-cols-2 gap-3">
               <RouteLink
                 to={report.status === "READY" ? "/report-analysis" : "/scanning"}
-                className="inline-flex items-center justify-center rounded-[1rem] bg-[#1E40AF] px-3 py-3 text-sm font-semibold text-white"
+                className="inline-flex items-center justify-center px-2 py-2 text-sm font-semibold text-[#1E40AF] transition-opacity hover:opacity-70"
                 onClick={onSelectReport ? () => onSelectReport(report.id) : undefined}
               >
                 Open Report
@@ -366,12 +387,12 @@ export function ReportArchiveList({
                 <button
                   type="button"
                   onClick={() => onPreviewSource?.(report.id)}
-                  className="inline-flex items-center justify-center rounded-[1rem] bg-white px-3 py-3 text-sm font-semibold text-[#1E40AF] shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+                  className="inline-flex items-center justify-center px-2 py-2 text-sm font-semibold text-[#1E40AF] transition-opacity hover:opacity-70"
                 >
                   Preview File
                 </button>
               ) : (
-                <div className="inline-flex items-center justify-center rounded-[1rem] bg-[#eef2fb] px-3 py-3 text-sm font-semibold text-slate-400">
+                <div className="inline-flex items-center justify-center px-2 py-2 text-sm font-semibold text-slate-400">
                   No Source
                 </div>
               )}
@@ -391,26 +412,88 @@ export function HealthCategoryList({
   return (
     <div className="mt-4 space-y-3">
       {items.map((item) => (
-        <Card key={item.title}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <CircleIcon label={item.title.slice(0, 2).toUpperCase()} tone={item.tone} />
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-slate-900">{item.title}</p>
-                  <Chip label={item.status} tone={item.tone} />
-                </div>
-                <p className="mt-1 text-sm text-slate-500">{item.marker}</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-sm text-slate-400">{item.subtitle}</p>
-              <p className="mt-2 font-semibold text-slate-900">{item.reading}</p>
-            </div>
-          </div>
-        </Card>
+        <HealthCategoryCard key={item.title} item={item} />
       ))}
     </div>
+  );
+}
+
+function HealthCategoryCard({ item }: { item: HealthCategoryItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleRows = expanded ? item.rows : item.rows.slice(0, 5);
+  const hiddenCount = Math.max(0, item.rows.length - 5);
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <CircleIcon label={item.title.slice(0, 2).toUpperCase()} tone={item.tone} />
+          <div>
+            <p className="font-semibold text-slate-900">{item.title}</p>
+            <p className="mt-1 text-sm text-slate-500">{item.subtitle}</p>
+          </div>
+        </div>
+        <RouteLink to={item.trendTo} className="shrink-0 text-sm font-semibold text-[#1E40AF]">
+          Trends
+        </RouteLink>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        {visibleRows.map((row) => (
+          <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1 text-sm">
+            <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-1">
+              <p className="truncate font-semibold text-slate-700" title={row.label}>
+                {row.label}
+              </p>
+              <div className="flex min-w-0 items-center gap-2">
+                <p
+                  className={`font-semibold ${
+                    row.state === "HIGH"
+                      ? "text-[#d92d20]"
+                      : row.state === "LOW"
+                        ? "text-[#1b7f4d]"
+                        : "text-slate-900"
+                  }`}
+                >
+                  {row.value}
+                </p>
+                <span
+                  className={`text-base font-semibold ${
+                    row.tone === "danger"
+                      ? "text-[#d92d20]"
+                      : row.tone === "accent"
+                        ? "text-[#3b82f6]"
+                        : "text-slate-300"
+                  }`}
+                >
+                  {row.state === "HIGH" ? "↑" : row.state === "LOW" ? "↓" : "−"}
+                </span>
+              </div>
+              <div />
+              <p className="truncate text-slate-500" title={row.unit}>
+                {row.unit}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-slate-500">{row.observedDate}</p>
+              <p className="mt-1 max-w-[10rem] break-words text-slate-500" title={row.reference}>
+                RR: {row.reference}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="mt-5 w-full text-center text-sm font-semibold text-[#1E40AF]"
+        >
+          {expanded ? "Show less" : `${hiddenCount} biomarkers more`}
+        </button>
+      ) : null}
+    </Card>
   );
 }
 
@@ -463,20 +546,29 @@ export function BiomarkerTrendCardList({
 
 export function ReportBiomarkerSections({
   groups,
+  onEditRow,
 }: {
   groups: ReportBiomarkerGroupItem[];
+  onEditRow?: (row: ReportBiomarkerRowItem) => void;
 }) {
   return (
     <>
       {groups.map((group) => (
-        <section key={group.section}>
+        <section key={group.id}>
+          {group.groupLabel ? (
+            <div className="mb-3 px-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1E40AF]">
+                {group.groupLabel}
+              </p>
+            </div>
+          ) : null}
           <div className="mb-3 flex items-center justify-between px-1">
             <h3 className="text-[1.12rem] font-semibold text-slate-900">{group.section}</h3>
             <Chip label={group.count.toUpperCase()} />
           </div>
           <div className="space-y-3">
             {group.rows.map((row) => (
-              <Card key={row.name}>
+              <Card key={row.id}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex gap-3">
                     <span
@@ -488,15 +580,27 @@ export function ReportBiomarkerSections({
                             : "bg-[#52d66c]"
                       }`}
                     />
-                    <div>
+                  <div>
                       <p className="font-semibold text-slate-900">{row.name}</p>
+                      {row.meta ? <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{row.meta}</p> : null}
                       <p className="mt-1 text-sm text-slate-500">{row.ref}</p>
-                      <p className="mt-3 text-[1.9rem] font-semibold tracking-[-0.04em] text-slate-900">
+                      <p className="mt-3 text-[1.65rem] font-semibold tracking-[-0.04em] text-slate-900">
                         {row.value}
                       </p>
                     </div>
                   </div>
-                  <Chip label={row.tag} tone={row.tone} />
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <Chip label={row.tag} tone={row.tone} />
+                    {onEditRow ? (
+                      <button
+                        type="button"
+                        onClick={() => onEditRow(row)}
+                        className="text-xs font-semibold uppercase tracking-[0.12em] text-[#1E40AF] transition-opacity hover:opacity-70"
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </Card>
             ))}

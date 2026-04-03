@@ -4,6 +4,7 @@ import type {
   Report,
   ScanScenario,
 } from "@/lib/healthDomain";
+import { CURRENT_SCAN_PARSER_VERSION } from "../scanParserVersion.js";
 
 function createSimulatedScanResults(examType: Report["examType"]): BiomarkerResult[] {
   if (examType === "Clinical") {
@@ -123,6 +124,8 @@ export function createMockUploadedReport(input: CreateUploadedReportInput): Repo
   return {
     id: `report_scan_${Date.now()}`,
     profileId: input.profileId,
+    batchId: input.batchId,
+    isSaved: false,
     title: baseTitle || "Imported Report",
     date: new Date().toISOString(),
     location: input.sourceType === "pdf" ? "Files Import" : "Mobile Upload",
@@ -136,6 +139,7 @@ export function createMockUploadedReport(input: CreateUploadedReportInput): Repo
     scanScenario,
     sourceUpdatedAt,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   };
 }
 
@@ -147,6 +151,7 @@ export function completeMockScanReport(report: Report): Report {
       scanFailureCode: "file_invalid",
       scanFailureMessage: "The selected file appears damaged or unsupported. Please upload a cleaner report file.",
       resultsGeneratedAt: new Date().toISOString(),
+      scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
     };
   }
 
@@ -157,6 +162,7 @@ export function completeMockScanReport(report: Report): Report {
       scanFailureCode: "ocr_failed",
       scanFailureMessage: "OCR confidence was too low to extract reliable biomarkers. Retry once or upload a clearer file.",
       resultsGeneratedAt: new Date().toISOString(),
+      scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
     };
   }
 
@@ -166,6 +172,7 @@ export function completeMockScanReport(report: Report): Report {
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
     resultsGeneratedAt: new Date().toISOString(),
+    scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
   };
 }
 
@@ -177,5 +184,6 @@ export function retryMockScanReport(report: Report): Report {
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   };
 }

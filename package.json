@@ -1,13 +1,13 @@
 {
   "name": "new-project",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:api": "node server/index.js",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "test": "node --test src/lib/scan/mockScanService.test.ts src/lib/reportsArchiveUtils.test.ts src/lib/reportVersionState.test.ts server/assetStore.test.js server/assetsApi.test.js server/scanProviders/normalizeExtractDocMulti.test.js server/scanProviders/tencentExtractDocMulti.test.js",
+    "test": "node --test src/lib/scan/mockScanService.test.ts src/lib/reportsArchiveUtils.test.ts src/lib/reportVersionState.test.ts server/assetStore.test.js server/assetsApi.test.js server/scanDebugStore.test.js server/scanProviders/normalizeExtractDocMulti.test.js server/scanProviders/tencentExtractDocMulti.test.js",
     "preview": "vite preview",
     "start:api": "node server/index.js"
   },

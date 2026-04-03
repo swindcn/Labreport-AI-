@@ -7,7 +7,7 @@
 - 本地 Node API 服务
 - 腾讯云文档抽取扫描链路
 
-当前版本：`v0.3.0`
+当前版本：`v0.4.0`
 
 ## 项目概览
 
@@ -24,7 +24,19 @@ Vitalis Core 用于帮助用户完成医疗报告上传、OCR/结构化识别、
 - 报告分析页、归档页、源文件页联动
 - 失败报告重试与批量管理
 - 腾讯云 `ExtractDocMulti` 文档抽取接入
+- 未保存扫描草稿与 `Save Results` / `Discard` 流程
+- 报告结果人工校正与单条 biomarker 编辑
+- Trends 分类页按最新记录展开查看
+- 多页 PDF、扫描 debug 落盘与 parser version 状态提示
 - 本地 mock 扫描兜底
+
+## **v0.4.0 更新摘要**
+
+- 接入腾讯云真实识别后的报告保存闭环：上传扫描结果默认不入归档，只有点击 `Save Results` 后才进入 Recent Records、Reports Archive 和 Trends
+- 新增 `Discard`，可直接丢弃未保存识别结果，不保留隐藏草稿
+- Report Analysis 支持人工校正 biomarker，当前可编辑 code、name、category、value、unit、reference range、status
+- Reports Archive 与 Trends 页做了多轮信息密度优化：文件名单行省略、状态提示收敛、按钮文本化、趋势分类卡支持默认 5 条和展开更多
+- OCR 规则增强：支持多页 PDF、扫描 debug JSON、parser version 标记，以及病毒抗体类项目（如 `HAV-IgM` / `HDV-IgG` / `HEV-IgM`）的独立映射，避免被错误合并
 
 ## 技术栈
 
@@ -97,6 +109,7 @@ TENCENT_OCR_REGION=ap-guangzhou
 TENCENT_OCR_CONFIG_ID=General
 TENCENT_OCR_MAX_PDF_PAGES=10
 DEBUG_SCAN_RESPONSE=false
+SCAN_SAVE_DEBUG_JSON=false
 ```
 
 说明：
@@ -104,6 +117,7 @@ DEBUG_SCAN_RESPONSE=false
 - SCAN\_PROVIDER=tencent 表示扫描走腾讯云
 - SCAN\_PROVIDER=mock 表示回退到本地 mock 扫描
 - DEBUG\_SCAN\_RESPONSE=true 会在后端打印腾讯云原始响应，便于调试映射
+- SCAN\_SAVE\_DEBUG\_JSON=true 会把原始扫描响应和归一化结果写入 `server/data/runtime/scan-debug`
 - TENCENT\_SECRET\_ID / TENCENT\_SECRET\_KEY 仅供后端使用，不应提交到 Git
 
 ## **.gitignore 说明**
@@ -280,6 +294,7 @@ API 抽象位于 src/lib/api/healthApi.ts。
 - POST /reports/:id/scan
 - POST /reports/:id/retry
 - GET /reports/:id/results
+- PATCH /reports/:id/results/:resultId
 - POST /reports/manual
 - GET /assets/:id/content
 - GET /users/me/preferences
@@ -303,6 +318,8 @@ API 抽象位于 src/lib/api/healthApi.ts。
 - 删除成员、报告、源文件时的资产清理
 - 扫描 provider 分流
 - 腾讯云文档抽取扫描
+- 扫描 debug artifact 写入
+- 单条 biomarker 结果 PATCH 更新
 
 资产存储位于 server/assetStore.js。
 
@@ -358,6 +375,13 @@ API 抽象位于 src/lib/api/healthApi.ts。
    - Key.AutoName
    - Value.AutoContent
 
+如需离线校正真实样本，可同时打开：
+
+- `DEBUG_SCAN_RESPONSE=true`
+- `SCAN_SAVE_DEBUG_JSON=true`
+
+这样每次扫描都会把原始响应和归一化结果写入 `server/data/runtime/scan-debug`
+
 若识别到了文本但没有入库，通常是字段名映射需要调整。
 
 ## **测试**
@@ -369,6 +393,7 @@ API 抽象位于 src/lib/api/healthApi.ts。
 - 报告版本状态判定：src/lib/reportVersionState.test.ts
 - 资产存储单元测试：server/assetStore.test.js
 - 资产相关 API 集成测试：server/assetsApi.test.js
+- 扫描 debug store：server/scanDebugStore.test.js
 - 腾讯云结构化归一化回归测试：server/scanProviders/normalizeExtractDocMulti.test.js
 - 腾讯云多页 PDF provider 测试：server/scanProviders/tencentExtractDocMulti.test.js
 
@@ -378,6 +403,9 @@ API 抽象位于 src/lib/api/healthApi.ts。
 - npm run build
 - 真实上传 3 类样本报告
 - 扫描成功态、失败态、重试态
+- 未保存草稿的 Save / Discard
+- Report Analysis 单条结果编辑
+- Trends 分类页默认 5 条与展开更多
 
 ## **默认演示账号**
 
@@ -387,6 +415,5 @@ API 抽象位于 src/lib/api/healthApi.ts。
 ## **当前已知限制**
 
 - 腾讯云字段映射仍需根据真实报告样本持续校正
-- PDF 当前默认只识别第一页
 - 医疗报告分类仍以规则映射为主，尚未做更深层语义标准化
-- 扫描 provider 目前仍集成在 server/index.js，后续建议拆分
+- 趋势分析页目前仍以规则聚合和简化图表为主，尚未加入真正的时序筛选与对比视图

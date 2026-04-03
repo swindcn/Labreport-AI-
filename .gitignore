@@ -9,3 +9,4 @@ server/data/runtime/
 .env.*.local
 server/.env.api
 server/.env.*
+tmp-*.json

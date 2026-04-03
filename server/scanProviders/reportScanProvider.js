@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { completeMockScanReport } from "../scanService.js"
+import { writeScanDebugArtifact } from "../scanDebugStore.js"
+import { CURRENT_SCAN_PARSER_VERSION } from "./scanParserVersion.js"
 import { scanWithTencentExtractDocMulti } from "./tencentExtractDocMulti.js"
 
 function findAssetRecord(db, assetId) {
@@ -45,6 +47,17 @@ export async function runReportScan(db, report) {
     sourceUpdatedAt: report.sourceUpdatedAt ?? new Date().toISOString(),
   })
 
+  await writeScanDebugArtifact({
+    provider: "tencent",
+    reportId: report.id,
+    profileId: report.profileId,
+    sourceFile: report.sourceFile,
+    pagesScanned: scanResult.pagesScanned,
+    status: "ready",
+    normalizedResults: scanResult.results,
+    rawPages: scanResult.rawPages,
+  })
+
   return {
     ...report,
     status: "ready",
@@ -53,11 +66,24 @@ export async function runReportScan(db, report) {
     scanFailureCode: undefined,
     scanFailureMessage: undefined,
     resultsGeneratedAt: scanResult.resultsGeneratedAt,
+    scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
   }
 }
 
 export function mapScanErrorToReport(report, error) {
   const failureCode = mapExternalErrorToFailureCode(error)
+
+  void writeScanDebugArtifact({
+    provider: process.env.SCAN_PROVIDER || "mock",
+    reportId: report.id,
+    profileId: report.profileId,
+    sourceFile: report.sourceFile ?? null,
+    status: "failed",
+    error: {
+      code: `${error?.code ?? ""}`,
+      message: error instanceof Error ? error.message : "Scan failed",
+    },
+  })
 
   return {
     ...report,
@@ -65,5 +91,6 @@ export function mapScanErrorToReport(report, error) {
     scanFailureCode: failureCode,
     scanFailureMessage: error instanceof Error ? error.message : "Scan failed",
     resultsGeneratedAt: new Date().toISOString(),
+    scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
   }
 }

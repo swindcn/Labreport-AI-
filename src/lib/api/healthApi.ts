@@ -14,6 +14,7 @@ import type {
   HealthSession,
   Profile,
   Report,
+  UpdateBiomarkerResultInput,
   UpdateReportInput,
 } from "@/lib/healthDomain";
 import {
@@ -21,6 +22,7 @@ import {
   createMockUploadedReport,
   retryMockScanReport,
 } from "@/lib/scan/mockScanService";
+import { CURRENT_SCAN_PARSER_VERSION } from "@/lib/scanParserVersion";
 
 const LEGACY_STORAGE_KEY = "vitalis-core-state-v1";
 const STORAGE_KEYS = {
@@ -66,6 +68,7 @@ export type HealthApi = {
     attachSource: (reportId: string, input: AttachReportSourceInput) => Promise<Report>;
     update: (reportId: string, patch: UpdateReportInput) => Promise<Report>;
     setFavorite: (reportId: string, isFavorite: boolean) => Promise<Report>;
+    updateResult: (reportId: string, resultId: string, patch: UpdateBiomarkerResultInput) => Promise<Report>;
     delete: (reportId: string) => Promise<DeleteReportResult>;
     startScan: (reportId: string) => Promise<Report>;
     retryScan: (reportId: string) => Promise<Report>;
@@ -156,6 +159,7 @@ function createManualReport(input: CreateManualReportInput): Report {
   return {
     id: `report_manual_${Date.now()}`,
     profileId: input.profileId,
+    isSaved: true,
     title: input.title,
     date: new Date(input.date).toISOString(),
     location: "Manual Entry",
@@ -168,13 +172,16 @@ function createManualReport(input: CreateManualReportInput): Report {
     isFavorite: false,
     sourceUpdatedAt: generatedAt,
     resultsGeneratedAt: generatedAt,
+    scanParserVersion: CURRENT_SCAN_PARSER_VERSION,
   };
 }
 
-function createDraftUploadedReport(profileId: string, examType: Report["examType"]): Report {
+function createDraftUploadedReport(profileId: string, examType: Report["examType"], batchId?: string): Report {
   return {
     id: `report_upload_${Date.now()}`,
     profileId,
+    batchId,
+    isSaved: false,
     title: "Pending Upload",
     date: new Date().toISOString(),
     location: "Awaiting Source",
@@ -186,6 +193,7 @@ function createDraftUploadedReport(profileId: string, examType: Report["examType
     results: [],
     isFavorite: false,
     resultsGeneratedAt: undefined,
+    scanParserVersion: undefined,
   };
 }
 
@@ -472,7 +480,7 @@ function createLocalHealthApi(): HealthApi {
       },
       async createUploaded(input) {
         const reports = (await readReports()) ?? [];
-        const draftReport = createDraftUploadedReport(input.profileId, input.examType);
+        const draftReport = createDraftUploadedReport(input.profileId, input.examType, input.batchId);
 
         writeLocalResource(STORAGE_KEYS.reports, [draftReport, ...reports]);
 
@@ -545,6 +553,7 @@ function createLocalHealthApi(): HealthApi {
 
         const sourceReport = createMockUploadedReport({
           profileId: existingReport.profileId,
+          batchId: existingReport.batchId,
           fileName: input.fileName,
           examType: input.examType,
           sourceType: input.sourceType,
@@ -566,6 +575,7 @@ function createLocalHealthApi(): HealthApi {
           sourceFile: existingReport.sourceFile ?? null,
           sourceUpdatedAt: sourceReport.sourceUpdatedAt,
           resultsGeneratedAt: undefined,
+          scanParserVersion: undefined,
         } satisfies Report;
 
         writeLocalResource(
@@ -606,6 +616,39 @@ function createLocalHealthApi(): HealthApi {
         const updatedReport = {
           ...existingReport,
           isFavorite,
+        } satisfies Report;
+
+        writeLocalResource(
+          STORAGE_KEYS.reports,
+          reports.map((report) => (report.id === reportId ? updatedReport : report)),
+        );
+
+        return updatedReport;
+      },
+      async updateResult(reportId, resultId, patch) {
+        const reports = (await readReports()) ?? [];
+        const existingReport = reports.find((report) => report.id === reportId);
+
+        if (!existingReport) {
+          throw new Error(`Report ${reportId} not found`);
+        }
+
+        const hasTarget = existingReport.results.some((result) => result.id === resultId);
+
+        if (!hasTarget) {
+          throw new Error(`Result ${resultId} not found`);
+        }
+
+        const updatedReport = {
+          ...existingReport,
+          results: existingReport.results.map((result) =>
+            result.id === resultId
+              ? {
+                  ...result,
+                  ...patch,
+                }
+              : result,
+          ),
         } satisfies Report;
 
         writeLocalResource(
@@ -740,6 +783,18 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T | null
   return (await response.json()) as T;
 }
 
+async function requestJsonAllowUnauthorized<T>(url: string, init?: RequestInit): Promise<T | null> {
+  try {
+    return await requestJson<T>(url, init);
+  } catch (error) {
+    if (error instanceof Error && /: 401$/.test(error.message)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 function listFromResponse<T>(payload: { items: T[] } | T[]): T[] {
   return Array.isArray(payload) ? payload : payload.items;
 }
@@ -765,7 +820,7 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
         requestJson<HealthSession>(resourceUrl("/auth/session")),
         requestJson<{ items: Profile[] } | Profile[]>(resourceUrl("/profiles")),
         requestJson<{ items: Report[] } | Report[]>(resourceUrl("/reports")),
-        requestJson<HealthPreferences>(resourceUrl("/users/me/preferences")),
+        requestJsonAllowUnauthorized<HealthPreferences>(resourceUrl("/users/me/preferences")),
         getClientState(),
       ]);
 
@@ -967,6 +1022,24 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
 
         return report;
       },
+      async updateResult(reportId, resultId, patch) {
+        const report = await requestJson<Report>(
+          resourceUrl(`/reports/${encodeURIComponent(reportId)}/results/${encodeURIComponent(resultId)}`),
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(patch),
+          },
+        );
+
+        if (!report) {
+          throw new Error(`Report ${reportId} result update returned empty response`);
+        }
+
+        return report;
+      },
       async delete(reportId) {
         const payload = await requestJson<DeleteReportResult>(resourceUrl(`/reports/${encodeURIComponent(reportId)}`), {
           method: "DELETE",
@@ -986,6 +1059,7 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
           },
           body: JSON.stringify({
             profileId: input.profileId,
+            batchId: input.batchId,
             examType: input.examType,
           }),
         });

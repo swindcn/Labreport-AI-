@@ -89,9 +89,15 @@ export type BiomarkerResult = {
   status: BiomarkerStatus;
 };
 
+export type UpdateBiomarkerResultInput = Partial<
+  Pick<BiomarkerResult, "code" | "name" | "category" | "value" | "unit" | "referenceText" | "status">
+>;
+
 export type Report = {
   id: string;
   profileId: string;
+  batchId?: string;
+  isSaved?: boolean;
   title: string;
   date: string;
   location: string;
@@ -108,6 +114,7 @@ export type Report = {
   sourceFile?: FileAssetRef | null;
   sourceUpdatedAt?: string;
   resultsGeneratedAt?: string;
+  scanParserVersion?: string;
 };
 
 export type HealthUiPreferences = {
@@ -144,6 +151,7 @@ export type CreateManualReportInput = {
 
 export type CreateUploadedReportInput = {
   profileId: string;
+  batchId?: string;
   fileName: string;
   examType: ExamType;
   sourceType: Exclude<SourceType, "manual">;
@@ -154,7 +162,7 @@ export type CreateUploadedReportInput = {
 
 export type AttachReportSourceInput = Omit<CreateUploadedReportInput, "profileId">;
 
-export type UpdateReportInput = Partial<Pick<Report, "title" | "location">>;
+export type UpdateReportInput = Partial<Pick<Report, "title" | "location" | "isSaved">>;
 
 export type CreateProfileInput = {
   name: string;

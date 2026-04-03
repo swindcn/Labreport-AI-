@@ -29,6 +29,7 @@ import {
   MonthlyTrendList,
   ProfileMenuSections,
   ReportArchiveList,
+  type ReportBiomarkerRowItem,
   RecentRecordsSection,
   ReportBiomarkerSections,
 } from "@/components/health/sections";
@@ -45,6 +46,8 @@ import {
   filterAndSortArchiveReports,
   groupArchiveReportsByMonth,
 } from "@/lib/reportsArchiveUtils";
+import { getReportVersionState } from "@/lib/reportVersionState";
+import type { BiomarkerStatus } from "@/lib/healthDomain";
 
 const inAppTabs = [
   { label: "HOME", to: "/dashboard" },
@@ -173,6 +176,7 @@ function downloadTextFile(fileName: string, content: string, mimeType: string) {
 type UploadSourceKind = "camera" | "gallery" | "files";
 
 type PendingUploadSelection = {
+  id: string;
   source: UploadSourceKind;
   sourceType: "image" | "pdf";
   fileName: string;
@@ -219,6 +223,18 @@ function formatTimestampLabel(value?: string) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatDateOnlyLabel(value?: string) {
+  if (!value) {
+    return "Unavailable";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
   }).format(new Date(value));
 }
 
@@ -445,17 +461,35 @@ function UploadReportPage() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const filesInputRef = useRef<HTMLInputElement | null>(null);
-  const [pendingUpload, setPendingUpload] = useState<PendingUploadSelection | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<PendingUploadSelection[]>([]);
+  const pendingUploadsRef = useRef<PendingUploadSelection[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
+    pendingUploadsRef.current = pendingUploads;
+  }, [pendingUploads]);
+
+  useEffect(() => {
     return () => {
-      if (pendingUpload?.previewUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(pendingUpload.previewUrl);
+      for (const pendingUpload of pendingUploadsRef.current) {
+        if (pendingUpload.previewUrl?.startsWith("blob:")) {
+          URL.revokeObjectURL(pendingUpload.previewUrl);
+        }
       }
     };
-  }, [pendingUpload?.previewUrl]);
+  }, []);
+
+  const revokeUploadPreview = (upload: PendingUploadSelection) => {
+    if (upload.previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(upload.previewUrl);
+    }
+  };
+
+  const getPendingUploadsTotalSizeLabel = () => {
+    const totalBytes = pendingUploads.reduce((total, item) => total + item.sizeBytes, 0);
+    return formatFileSize(totalBytes);
+  };
 
   const selectSource = (source: UploadSourceKind) => {
     if (source === "camera") {
@@ -471,50 +505,51 @@ function UploadReportPage() {
     filesInputRef.current?.click();
   };
 
-  const handleSelectedFile = async (source: UploadSourceKind, file: File | null) => {
-    if (!file) {
+  const handleSelectedFiles = async (source: UploadSourceKind, fileList: FileList | null) => {
+    const files = fileList ? Array.from(fileList) : [];
+
+    if (files.length === 0) {
       return;
     }
 
-    const sourceType = getUploadSourceType(file);
-    const isImage = sourceType === "image";
-    const isPdf = sourceType === "pdf";
+    const nextUploads: PendingUploadSelection[] = [];
 
-    if ((source === "camera" || source === "gallery") && !isImage) {
-      setValidationError("Camera and Gallery only support image files.");
-      return;
-    }
+    for (const file of files) {
+      const sourceType = getUploadSourceType(file);
+      const isImage = sourceType === "image";
+      const isPdf = sourceType === "pdf";
 
-    if (source === "files" && !isImage && !isPdf) {
-      setValidationError("Files only supports JPG, PNG, WEBP, HEIC, or PDF documents.");
-      return;
-    }
-
-    if (isImage && file.size > MAX_IMAGE_FILE_SIZE_BYTES) {
-      setValidationError("Image file is too large. Please choose an image smaller than 12 MB.");
-      return;
-    }
-
-    if (isPdf && file.size > MAX_PDF_FILE_SIZE_BYTES) {
-      setValidationError("PDF file is too large. Please choose a document smaller than 20 MB.");
-      return;
-    }
-
-    let fileDataUrl = "";
-
-    try {
-      fileDataUrl = await readFileAsDataUrl(file);
-    } catch {
-      setValidationError("Failed to read the selected file.");
-      return;
-    }
-
-    setPendingUpload((current) => {
-      if (current?.previewUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(current.previewUrl);
+      if ((source === "camera" || source === "gallery") && !isImage) {
+        setValidationError("Camera and Gallery only support image files.");
+        return;
       }
 
-      return {
+      if (source === "files" && !isImage && !isPdf) {
+        setValidationError("Files only supports JPG, PNG, WEBP, HEIC, or PDF documents.");
+        return;
+      }
+
+      if (isImage && file.size > MAX_IMAGE_FILE_SIZE_BYTES) {
+        setValidationError("One or more image files are too large. Please choose images smaller than 12 MB.");
+        return;
+      }
+
+      if (isPdf && file.size > MAX_PDF_FILE_SIZE_BYTES) {
+        setValidationError("One or more PDF files are too large. Please choose documents smaller than 20 MB.");
+        return;
+      }
+
+      let fileDataUrl = "";
+
+      try {
+        fileDataUrl = await readFileAsDataUrl(file);
+      } catch {
+        setValidationError("Failed to read one of the selected files.");
+        return;
+      }
+
+      nextUploads.push({
+        id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
         source,
         sourceType,
         fileName: file.name || (sourceType === "pdf" ? "Imported Report.pdf" : "Camera Capture.jpg"),
@@ -523,7 +558,16 @@ function UploadReportPage() {
         sizeBytes: file.size,
         fileDataUrl,
         previewUrl: sourceType === "image" ? URL.createObjectURL(file) : null,
-      };
+      });
+    }
+
+    setPendingUploads((current) => {
+      if (source === "camera") {
+        current.forEach(revokeUploadPreview);
+        return nextUploads.slice(0, 1);
+      }
+
+      return [...current, ...nextUploads];
     });
     setValidationError(null);
   };
@@ -531,32 +575,65 @@ function UploadReportPage() {
   const handleFileChange =
     (source: UploadSourceKind) =>
     (event: ChangeEvent<HTMLInputElement>) => {
-      void handleSelectedFile(source, event.target.files?.[0] ?? null);
+      void handleSelectedFiles(source, event.target.files);
       event.target.value = "";
     };
 
   const handleStartAnalysis = () => {
-    if (!pendingUpload || isSubmitting) {
+    if (pendingUploads.length === 0 || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
-    void actions
-      .createUploadedReport({
-        fileName: pendingUpload.fileName,
-        sourceType: pendingUpload.sourceType,
-        fileDataUrl: pendingUpload.fileDataUrl,
-        mimeType: pendingUpload.mimeType,
-        sizeBytes: pendingUpload.sizeBytes,
-      })
-      .then((created) => {
+    void (async () => {
+      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let createdCount = 0;
+
+      for (const pendingUpload of pendingUploads) {
+        const created = await actions.createUploadedReport({
+          batchId,
+          fileName: pendingUpload.fileName,
+          sourceType: pendingUpload.sourceType,
+          fileDataUrl: pendingUpload.fileDataUrl,
+          mimeType: pendingUpload.mimeType,
+          sizeBytes: pendingUpload.sizeBytes,
+        });
+
         if (created) {
+          createdCount += 1;
+        }
+      }
+
+      if (createdCount > 0) {
+        pendingUploads.forEach(revokeUploadPreview);
+        setPendingUploads([]);
+        if (createdCount === pendingUploads.length) {
           window.location.hash = "#/scanning";
         }
-      })
-      .finally(() => {
+      }
+
+      if (createdCount === 0) {
+        setValidationError("Failed to create report scans for the selected files.");
+      } else if (createdCount < pendingUploads.length) {
+        setValidationError(`Created ${createdCount} of ${pendingUploads.length} report scans. Please review and retry any failed files.`);
+      }
+    })().finally(() => {
         setIsSubmitting(false);
       });
+  };
+
+  const primaryPendingUpload = pendingUploads[0] ?? null;
+
+  const handleRemovePendingUpload = (uploadId: string) => {
+    setPendingUploads((current) => {
+      const target = current.find((item) => item.id === uploadId);
+
+      if (target) {
+        revokeUploadPreview(target);
+      }
+
+      return current.filter((item) => item.id !== uploadId);
+    });
   };
 
   return (
@@ -569,11 +646,12 @@ function UploadReportPage() {
         className="hidden"
         onChange={handleFileChange("camera")}
       />
-      <input ref={galleryInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange("gallery")} />
+      <input ref={galleryInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange("gallery")} />
       <input
         ref={filesInputRef}
         type="file"
         accept="image/*,.pdf,application/pdf"
+        multiple
         className="hidden"
         onChange={handleFileChange("files")}
       />
@@ -600,10 +678,10 @@ function UploadReportPage() {
       <div className="grid grid-cols-3 gap-3">
         {[
           { source: "camera" as const, label: "Camera", icon: "CA", detail: "Take photo" },
-          { source: "gallery" as const, label: "Gallery", icon: "GA", detail: "Choose image" },
-          { source: "files" as const, label: "Files", icon: "FI", detail: "PDF or image" },
+          { source: "gallery" as const, label: "Gallery", icon: "GA", detail: "Choose images" },
+          { source: "files" as const, label: "Files", icon: "FI", detail: "PDFs or images" },
         ].map((item) => {
-          const active = pendingUpload?.source === item.source;
+          const active = pendingUploads.some((upload) => upload.source === item.source);
 
           return (
             <div key={item.source} className={active ? "rounded-[1.9rem] ring-2 ring-[#1E40AF] ring-offset-2 ring-offset-[#f9fbff]" : ""}>
@@ -620,30 +698,63 @@ function UploadReportPage() {
 
       <Card className="bg-[#f4f7ff]">
         <div className="flex items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <Label>SELECTED INPUT</Label>
-            <p className="mt-2 text-lg font-semibold text-slate-900">
-              {pendingUpload ? pendingUpload.fileName : "No report chosen yet"}
+            <p
+              className="mt-2 truncate text-lg font-semibold text-slate-900"
+              title={primaryPendingUpload ? primaryPendingUpload.fileName : undefined}
+            >
+              {primaryPendingUpload ? (pendingUploads.length === 1 ? primaryPendingUpload.fileName : `${pendingUploads.length} files ready`) : "No report chosen yet"}
             </p>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              {pendingUpload
-                ? `${getUploadSourceLabel(pendingUpload.source)} • ${pendingUpload.sourceType === "pdf" ? "PDF document" : "Image capture"}`
+              {primaryPendingUpload
+                ? pendingUploads.length === 1
+                  ? `${getUploadSourceLabel(primaryPendingUpload.source)} • ${primaryPendingUpload.sourceType === "pdf" ? "PDF document" : "Image capture"}`
+                  : `${pendingUploads.filter((item) => item.sourceType === "pdf").length} PDF • ${pendingUploads.filter((item) => item.sourceType === "image").length} image`
                 : "Choose one of the three input methods above to continue."}
             </p>
-            {pendingUpload ? <p className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{pendingUpload.fileSizeLabel}</p> : null}
+            {primaryPendingUpload ? (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                {pendingUploads.length === 1 ? primaryPendingUpload.fileSizeLabel : `${getPendingUploadsTotalSizeLabel()} total`}
+              </p>
+            ) : null}
           </div>
-          {pendingUpload ? (
-            <Chip label={pendingUpload.sourceType === "pdf" ? "PDF" : "IMAGE"} tone="accent" />
+          {primaryPendingUpload ? (
+            <Chip label={pendingUploads.length > 1 ? `${pendingUploads.length} FILES` : primaryPendingUpload.sourceType === "pdf" ? "PDF" : "IMAGE"} tone="accent" />
           ) : null}
         </div>
 
-        {pendingUpload?.previewUrl ? (
+        {primaryPendingUpload?.previewUrl ? (
           <div className="mt-4 overflow-hidden rounded-[1.3rem] bg-white">
-            <img src={pendingUpload.previewUrl} alt="" className="h-44 w-full object-cover" />
+            <img src={primaryPendingUpload.previewUrl} alt="" className="h-44 w-full object-cover" />
           </div>
-        ) : pendingUpload?.sourceType === "pdf" ? (
+        ) : primaryPendingUpload?.sourceType === "pdf" ? (
           <div className="mt-4 flex h-32 items-center justify-center rounded-[1.3rem] bg-[#1E40AF] text-sm font-semibold uppercase tracking-[0.18em] text-white">
             PDF Ready
+          </div>
+        ) : null}
+
+        {pendingUploads.length > 1 ? (
+          <div className="mt-4 space-y-2">
+            {pendingUploads.map((upload, index) => (
+              <div key={upload.id} className="flex items-center justify-between gap-3 rounded-[1rem] bg-white px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {index + 1}. {upload.fileName}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {getUploadSourceLabel(upload.source)} • {upload.sourceType === "pdf" ? "PDF" : "Image"} • {upload.fileSizeLabel}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRemovePendingUpload(upload.id)}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
       </Card>
@@ -652,7 +763,7 @@ function UploadReportPage() {
         <div className="flex gap-3">
           <CircleIcon label="i" tone="accent" />
           <p className="text-[1.02rem] leading-7 text-slate-500">
-            Camera and Gallery accept images up to 12 MB. Files accepts image documents up to 12 MB or PDFs up to 20 MB. The report will first enter processing, then open in Report Analysis after scan completion.
+            Camera accepts one image up to 12 MB. Gallery supports multi-select images up to 12 MB each. Files supports multi-select images up to 12 MB each or PDFs up to 20 MB each. Each selected file becomes its own report scan.
           </p>
         </div>
       </Card>
@@ -660,14 +771,14 @@ function UploadReportPage() {
       <button
         type="button"
         onClick={handleStartAnalysis}
-        disabled={!pendingUpload || isSubmitting}
+        disabled={pendingUploads.length === 0 || isSubmitting}
         className={`inline-flex items-center justify-center rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
-          pendingUpload && !isSubmitting
+          pendingUploads.length > 0 && !isSubmitting
             ? "bg-[#1E40AF] text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
             : "bg-[#d9dfef] text-slate-500"
         }`}
       >
-        {isSubmitting ? "Creating Scan..." : "Start Analysis"}
+        {isSubmitting ? `Creating ${pendingUploads.length} Scan${pendingUploads.length > 1 ? "s" : ""}...` : pendingUploads.length > 1 ? "Start Batch Analysis" : "Start Analysis"}
       </button>
       {validationError ? <p className="text-center text-xs font-semibold text-[#d92d20]">{validationError}</p> : null}
       {sync.error ? <p className="text-center text-xs font-semibold text-[#d92d20]">{sync.error}</p> : null}
@@ -678,12 +789,26 @@ function UploadReportPage() {
 function ScanningPage() {
   const { state, derived, sync, actions } = useHealthStore();
   const selectedReport = derived.selectedReport;
+  const batchReports = derived.selectedReportBatchReports;
   const autoCompleteStartedRef = useRef(false);
   const setScanProgress = actions.setScanProgress;
   const completeScan = actions.completeScan;
   const retrySelectedScan = actions.retrySelectedScan;
   const refreshSelectedReport = actions.refreshSelectedReport;
   const hasScanFailure = selectedReport?.status === "failed";
+  const batchReportCount = batchReports.length || (selectedReport ? 1 : 0);
+  const completedBatchCount = batchReports.filter((report) => report.status !== "processing").length;
+  const remainingBatchReports = batchReports.filter((report) => report.status === "processing");
+  const displayedProgress =
+    batchReportCount > 1
+      ? Math.min(
+          100,
+          Math.round(
+            ((completedBatchCount + (selectedReport?.status === "processing" ? state.scanSession.progress / 100 : 0)) / batchReportCount) *
+              100,
+          ),
+        )
+      : state.scanSession.progress;
   const scanFailureCode = selectedReport?.scanFailureCode;
   const awaitingFreshResults = Boolean(
     selectedReport?.sourceUpdatedAt &&
@@ -718,9 +843,7 @@ function ScanningPage() {
         autoCompleteStartedRef.current = true;
         window.setTimeout(() => {
           void completeScan().then((completedReport) => {
-            if (completedReport?.status === "ready") {
-              window.location.hash = "#/report-analysis";
-            } else if (!completedReport) {
+            if (!completedReport) {
               autoCompleteStartedRef.current = false;
             }
           });
@@ -741,6 +864,10 @@ function ScanningPage() {
 
   useEffect(() => {
     if (selectedReport?.status === "ready" && state.scanSession.progress >= 100) {
+      if (remainingBatchReports.length > 0) {
+        return;
+      }
+
       const timer = window.setTimeout(() => {
         window.location.hash = "#/report-analysis";
       }, 650);
@@ -749,7 +876,33 @@ function ScanningPage() {
         window.clearTimeout(timer);
       };
     }
-  }, [selectedReport?.status, state.scanSession.progress]);
+  }, [remainingBatchReports.length, selectedReport?.status, state.scanSession.progress]);
+
+  useEffect(() => {
+    if (batchReportCount <= 1 || !selectedReport) {
+      return;
+    }
+
+    if (selectedReport.status !== "ready" && selectedReport.status !== "failed") {
+      return;
+    }
+
+    const nextProcessingReport = remainingBatchReports.find((report) => report.id !== selectedReport.id) ?? remainingBatchReports[0];
+
+    if (!nextProcessingReport) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      autoCompleteStartedRef.current = false;
+      actions.selectReport(nextProcessingReport.id);
+      actions.startScan();
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [actions, batchReportCount, remainingBatchReports, selectedReport]);
 
   useEffect(() => {
     if (!selectedReport?.id || selectedReport.status !== "processing") {
@@ -804,8 +957,13 @@ function ScanningPage() {
         <p className="mx-auto mt-4 max-w-[16rem] text-[1.2rem] leading-8 text-slate-500">
           Identifying biomarkers, results, and reference ranges.
         </p>
+        {batchReportCount > 1 ? (
+          <p className="mx-auto mt-3 max-w-[16rem] text-xs font-semibold uppercase tracking-[0.16em] text-[#1E40AF]">
+            Batch scan {Math.min(batchReportCount, completedBatchCount + 1)} / {batchReportCount}
+          </p>
+        ) : null}
         {selectedReport ? (
-          <p className="mx-auto mt-3 max-w-[16rem] text-sm font-semibold text-[#1E40AF]">
+          <p className="mx-auto mt-3 max-w-[16rem] truncate text-sm font-semibold text-[#1E40AF]" title={selectedReport.title}>
             {selectedReport.title} • {selectedReport.sourceType.toUpperCase()}
           </p>
         ) : null}
@@ -818,13 +976,13 @@ function ScanningPage() {
 
       <div className="pt-2">
         <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-          <span>Analyzing Structure</span>
-          <span>{hasScanFailure ? "FAILED" : `${state.scanSession.progress}%`}</span>
+          <span>{batchReportCount > 1 ? "Analyzing Batch" : "Analyzing Structure"}</span>
+          <span>{hasScanFailure && remainingBatchReports.length === 0 ? "FAILED" : `${displayedProgress}%`}</span>
         </div>
         <div className="mt-3 h-2 rounded-full bg-[#e5e9f4]">
           <div
             className={`h-2 rounded-full ${hasScanFailure ? "bg-[#f35650]" : "bg-[#1E40AF]"}`}
-            style={{ width: `${state.scanSession.progress}%` }}
+            style={{ width: `${displayedProgress}%` }}
           />
         </div>
       </div>
@@ -833,15 +991,21 @@ function ScanningPage() {
         <div className="flex gap-3">
           <CircleIcon label={hasScanFailure ? "!" : "i"} tone={hasScanFailure ? "danger" : "accent"} />
           <p className="text-[1.05rem] leading-7 text-slate-500">
-            {selectedReport?.status === "ready"
+            {selectedReport?.status === "ready" && remainingBatchReports.length === 0
               ? "Scan complete. Opening the report analysis view automatically."
+              : selectedReport?.status === "ready" && remainingBatchReports.length > 0
+                ? "Current file is complete. Continuing with the remaining files in this batch."
               : hasScanFailure
-                ? selectedReport?.scanFailureMessage ?? "The scan failed. Retry the task or upload another report file."
-                : "Running OCR, classifying biomarkers, and validating extracted values. You will be redirected automatically once processing completes."}
+                ? remainingBatchReports.length > 0
+                  ? `This file failed, but the batch will continue. ${selectedReport?.scanFailureMessage ?? ""}`.trim()
+                  : selectedReport?.scanFailureMessage ?? "The scan failed. Retry the task or upload another report file."
+                : batchReportCount > 1
+                  ? "Running OCR on each file in this batch, then merging the extracted biomarkers into one analysis view."
+                  : "Running OCR, classifying biomarkers, and validating extracted values. You will be redirected automatically once processing completes."}
           </p>
         </div>
       </Card>
-      {hasScanFailure ? (
+      {hasScanFailure && remainingBatchReports.length === 0 ? (
         <div className="grid grid-cols-2 gap-3">
           {scanFailureCode === "ocr_failed" ? (
             <button
@@ -887,6 +1051,27 @@ function ScanningPage() {
 function ReportAnalysisPage() {
   const { derived, sync, actions } = useHealthStore();
   const selectedReport = derived.selectedReport;
+  const selectedBatchReports = derived.selectedReportBatchReports;
+  const [editingBiomarker, setEditingBiomarker] = useState<ReportBiomarkerRowItem | null>(null);
+  const [biomarkerEditDraft, setBiomarkerEditDraft] = useState<{
+    code: string;
+    name: string;
+    category: string;
+    value: string;
+    unit: string;
+    referenceText: string;
+    status: BiomarkerStatus;
+  }>({
+    code: "",
+    name: "",
+    category: "",
+    value: "",
+    unit: "",
+    referenceText: "",
+    status: "normal",
+  });
+  const [isSavingBiomarkerEdit, setIsSavingBiomarkerEdit] = useState(false);
+  const selectedVersionState = selectedReport ? getReportVersionState(selectedReport) : null;
   const selectedArchiveItem = selectedReport
     ? derived.reportArchiveItems.find((report) => report.id === selectedReport.id)
     : undefined;
@@ -896,6 +1081,41 @@ function ReportAnalysisPage() {
       new Date(selectedReport.resultsGeneratedAt).getTime() >= new Date(selectedReport.sourceUpdatedAt).getTime(),
   );
   const awaitingFreshResults = Boolean(selectedReport?.sourceUpdatedAt && !hasLatestResults);
+  const reportDateLabel = selectedReport ? formatDateOnlyLabel(selectedReport.date) : "Unavailable";
+  const uploadDateLabel = selectedArchiveItem?.savedAt
+    ? selectedArchiveItem.savedAt
+    : formatDateOnlyLabel(selectedReport?.resultsGeneratedAt ?? selectedReport?.sourceUpdatedAt);
+  const biomarkerCategoryOptions = Array.from(
+    new Set([
+      ...derived.reportBiomarkerGroups.map((group) => group.section),
+      ...(editingBiomarker?.category ? [editingBiomarker.category] : []),
+    ]),
+  );
+
+  useEffect(() => {
+    if (!editingBiomarker) {
+      return;
+    }
+
+    setBiomarkerEditDraft({
+      code: editingBiomarker.code,
+      name: editingBiomarker.name,
+      category: editingBiomarker.category,
+      value: `${editingBiomarker.numericValue}`,
+      unit: editingBiomarker.unit,
+      referenceText: editingBiomarker.referenceText,
+      status: editingBiomarker.status,
+    });
+  }, [editingBiomarker]);
+
+  useEffect(() => {
+    if (selectedReport?.isSaved === false) {
+      return;
+    }
+
+    setEditingBiomarker(null);
+    setIsSavingBiomarkerEdit(false);
+  }, [selectedReport?.isSaved]);
 
   useEffect(() => {
     if (!sync.hydrated || !selectedReport?.id) {
@@ -909,6 +1129,28 @@ function ReportAnalysisPage() {
     void actions.saveSelectedReport().then((saved) => {
       if (saved) {
         window.location.hash = "#/reports-archive";
+      }
+    });
+  };
+
+  const handleDiscardResults = () => {
+    if (!selectedReport || selectedReport.isSaved !== false) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      selectedBatchReports.length > 1
+        ? `Discard this unsaved scan batch and remove ${selectedBatchReports.length} draft reports?`
+        : "Discard this unsaved scan result?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    void actions.discardSelectedUnsavedReportBatch().then((discarded) => {
+      if (discarded) {
+        window.location.hash = "#/report-upload";
       }
     });
   };
@@ -930,6 +1172,7 @@ function ReportAnalysisPage() {
       {
         report: {
           id: selectedReport.id,
+          batchId: selectedReport.batchId,
           title: selectedReport.title,
           date: selectedReport.date,
           location: selectedReport.location,
@@ -939,7 +1182,16 @@ function ReportAnalysisPage() {
           aiAccuracy: selectedReport.aiAccuracy,
           isFavorite: selectedReport.isFavorite ?? false,
         },
-        results: selectedReport.results,
+        batchReports: selectedBatchReports.map((report) => ({
+          id: report.id,
+          title: report.title,
+          date: report.date,
+          location: report.location,
+          status: report.status,
+          sourceType: report.sourceType,
+          results: report.results,
+        })),
+        results: selectedBatchReports.length > 1 ? selectedBatchReports.flatMap((report) => report.results) : selectedReport.results,
       },
       null,
       2,
@@ -966,6 +1218,48 @@ function ReportAnalysisPage() {
     });
   };
 
+  const handleEditBiomarker = (row: ReportBiomarkerRowItem) => {
+    setEditingBiomarker(row);
+  };
+
+  const handleCancelBiomarkerEdit = () => {
+    setEditingBiomarker(null);
+    setIsSavingBiomarkerEdit(false);
+  };
+
+  const handleSaveBiomarkerEdit = () => {
+    if (!editingBiomarker || isSavingBiomarkerEdit) {
+      return;
+    }
+
+    const nextValue = Number(biomarkerEditDraft.value);
+
+    if (!Number.isFinite(nextValue)) {
+      window.alert("Value must be a valid number.");
+      return;
+    }
+
+    setIsSavingBiomarkerEdit(true);
+    void actions
+      .updateReportResult(editingBiomarker.reportId, editingBiomarker.resultId, {
+        code: biomarkerEditDraft.code.trim() || editingBiomarker.code,
+        name: biomarkerEditDraft.name.trim() || editingBiomarker.name,
+        category: biomarkerEditDraft.category.trim() || editingBiomarker.category,
+        value: nextValue,
+        unit: biomarkerEditDraft.unit.trim() || editingBiomarker.unit,
+        referenceText: biomarkerEditDraft.referenceText.trim() || editingBiomarker.referenceText,
+        status: biomarkerEditDraft.status,
+      })
+      .then((saved) => {
+        if (saved) {
+          setEditingBiomarker(null);
+        }
+      })
+      .finally(() => {
+        setIsSavingBiomarkerEdit(false);
+      });
+  };
+
   const handlePreviewSource = () => {
     if (!selectedReport?.sourceFile) {
       return;
@@ -973,6 +1267,18 @@ function ReportAnalysisPage() {
 
     setReportSourceReturnPath("/report-analysis");
     window.location.hash = "#/report-source";
+  };
+
+  const handleRescanWithLatestParser = () => {
+    if (!selectedReport) {
+      return;
+    }
+
+    void actions.retrySelectedScan().then((started) => {
+      if (started) {
+        window.location.hash = "#/scanning";
+      }
+    });
   };
 
   return (
@@ -984,10 +1290,32 @@ function ReportAnalysisPage() {
         </h2>
         {selectedReport ? (
           <div className="mt-4 rounded-[1.3rem] bg-[#f4f7ff] px-4 py-4">
-            <p className="text-[1.05rem] font-semibold text-slate-900">{selectedReport.title}</p>
+            <p className="truncate text-[1.05rem] font-semibold text-slate-900" title={selectedReport.title}>
+              {selectedReport.title}
+            </p>
             <p className="mt-1 text-sm text-slate-500">
               {formatReportAnalysisMeta(selectedReport.date, selectedReport.location)}
             </p>
+            {selectedBatchReports.length > 1 ? (
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#1E40AF]">
+                {selectedBatchReports.length} reports merged by scan time and biomarker category
+              </p>
+            ) : null}
+            {selectedVersionState ? (
+              <p
+                className={`mt-2 text-xs font-semibold uppercase tracking-[0.14em] ${
+                  selectedVersionState.tone === "success"
+                    ? "text-[#1b7f4d]"
+                    : selectedVersionState.tone === "danger"
+                      ? "text-[#d92d20]"
+                      : selectedVersionState.tone === "warning"
+                        ? "text-[#9a6700]"
+                        : "text-[#1E40AF]"
+                }`}
+              >
+                {selectedVersionState.label} {selectedVersionState.detail ? `• ${selectedVersionState.detail}` : ""}
+              </p>
+            ) : null}
           </div>
         ) : (
           <p className="mt-4 text-sm text-slate-500">Select a report to inspect its biomarkers and AI interpretation.</p>
@@ -1025,16 +1353,14 @@ function ReportAnalysisPage() {
                   formatFileSize(selectedReport.sourceFile.sizeBytes)}
               </p>
               <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                Source Updated {formatTimestampLabel(selectedReport.sourceUpdatedAt)}
+                Report Time {reportDateLabel}
               </p>
               <p
                 className={`mt-2 text-xs font-semibold uppercase tracking-[0.12em] ${
                   awaitingFreshResults ? "text-[#cc8a00]" : "text-[#1E40AF]"
                 }`}
               >
-                {awaitingFreshResults
-                  ? "Results are not yet regenerated for this file"
-                  : `Results Generated ${formatTimestampLabel(selectedReport.resultsGeneratedAt)}`}
+                {`Saved Time ${uploadDateLabel}`}
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-2">
@@ -1057,6 +1383,26 @@ function ReportAnalysisPage() {
         </Card>
       ) : null}
 
+      {selectedVersionState?.label === "Parser Update" ? (
+        <Card className="bg-[#fff8ec]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex gap-3">
+              <CircleIcon label="!" tone="warning" />
+              <p className="text-[1.02rem] leading-7 text-[#9a6700]">
+                {selectedVersionState.detail}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRescanWithLatestParser}
+              className="shrink-0 rounded-[1rem] bg-white px-3 py-2 text-sm font-semibold text-[#1E40AF] shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+            >
+              Rescan
+            </button>
+          </div>
+        </Card>
+      ) : null}
+
       {awaitingFreshResults ? (
         <Card className="bg-[#fff8ec]">
           <div className="flex gap-3">
@@ -1068,7 +1414,122 @@ function ReportAnalysisPage() {
         </Card>
       ) : null}
 
-      <ReportBiomarkerSections groups={derived.reportBiomarkerGroups} />
+      <ReportBiomarkerSections
+        groups={derived.reportBiomarkerGroups}
+        onEditRow={selectedReport?.isSaved === false ? handleEditBiomarker : undefined}
+      />
+
+      {editingBiomarker ? (
+        <Card className="bg-[#f8fbff]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Label>RESULT REVIEW</Label>
+              <p className="mt-2 text-lg font-semibold text-slate-900">Edit Biomarker</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelBiomarkerEdit}
+              className="text-sm font-semibold text-slate-400 transition-opacity hover:opacity-70"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <Label>Code</Label>
+              <TextInput
+                value={biomarkerEditDraft.code}
+                onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, code: value }))}
+                placeholder="ALT"
+              />
+            </div>
+            <div>
+              <Label>Status</Label>
+              <SelectInput
+                value={biomarkerEditDraft.status}
+                onChange={(value) =>
+                  setBiomarkerEditDraft((current) => ({
+                    ...current,
+                    status: value as "normal" | "high" | "low",
+                  }))
+                }
+                placeholder="Select status"
+                options={["normal", "high", "low"]}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <Label>Name</Label>
+            <TextInput
+              value={biomarkerEditDraft.name}
+              onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, name: value }))}
+              placeholder="Biomarker name"
+            />
+          </div>
+
+          <div className="mt-3">
+            <Label>Category</Label>
+            <SelectInput
+              value={biomarkerEditDraft.category}
+              onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, category: value }))}
+              placeholder="Select category"
+              options={biomarkerCategoryOptions}
+            />
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <Label>Value</Label>
+              <TextInput
+                value={biomarkerEditDraft.value}
+                onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, value }))}
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <Label>Unit</Label>
+              <TextInput
+                value={biomarkerEditDraft.unit}
+                onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, unit: value }))}
+                placeholder="U/L"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <Label>Reference Range</Label>
+            <TextInput
+              value={biomarkerEditDraft.referenceText}
+              onChange={(value) => setBiomarkerEditDraft((current) => ({ ...current, referenceText: value }))}
+              placeholder="Ref 7 - 55 U/L"
+            />
+          </div>
+
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handleCancelBiomarkerEdit}
+              className="rounded-[1.2rem] bg-white px-4 py-4 text-base font-semibold text-slate-600 shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveBiomarkerEdit}
+              disabled={isSavingBiomarkerEdit}
+              className={`rounded-[1.2rem] px-4 py-4 text-base font-semibold ${
+                isSavingBiomarkerEdit
+                  ? "bg-[#d9dfef] text-slate-500"
+                  : "bg-[#1E40AF] text-white shadow-[0_18px_40px_rgba(30,64,175,0.24)]"
+              }`}
+            >
+              {isSavingBiomarkerEdit ? "Saving..." : "Save Edit"}
+            </button>
+          </div>
+        </Card>
+      ) : null}
 
       <section>
         <h3 className="px-1 text-[1.12rem] font-semibold text-slate-900">Actionable Insights</h3>
@@ -1086,7 +1547,7 @@ function ReportAnalysisPage() {
         </div>
       </section>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${selectedReport?.isSaved === false ? "grid-cols-4" : "grid-cols-3"}`}>
         <button
           type="button"
           onClick={handleToggleFavorite}
@@ -1103,6 +1564,15 @@ function ReportAnalysisPage() {
         >
           Export JSON
         </button>
+        {selectedReport?.isSaved === false ? (
+          <button
+            type="button"
+            onClick={handleDiscardResults}
+            className="rounded-[1.2rem] bg-[#eef2fb] px-3 py-3 text-sm font-semibold text-slate-600 shadow-[0_14px_28px_rgba(135,149,198,0.10)]"
+          >
+            Discard
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={handleDeleteReport}
@@ -1231,8 +1701,10 @@ function ReportSourcePage() {
         <>
           <Card className="bg-[#f8fbff]">
             <p className="text-sm text-slate-500">Linked Report</p>
-            <p className="mt-2 text-lg font-semibold text-slate-900">{selectedReport.title}</p>
-            <p className="mt-2 text-sm text-slate-500">
+            <p className="mt-2 truncate text-lg font-semibold text-slate-900" title={selectedReport.title}>
+              {selectedReport.title}
+            </p>
+            <p className="mt-2 truncate text-sm text-slate-500" title={sourceFile.fileName}>
               {sourceFile.fileName} • {isPdf ? "PDF" : isImage ? "Image" : sourceFile.mimeType} • {formatFileSize(sourceFile.sizeBytes)}
             </p>
           </Card>

@@ -1,42 +1,479 @@
+import { GENERATED_BIOMARKER_REFERENCE } from "./biomarkerReferenceData.generated.js"
+
 function normalizeText(value) {
   return `${value ?? ""}`
     .trim()
     .toUpperCase()
-    .replace(/[（）]/g, "()")
-    .replace(/[^\p{L}\p{N}()]+/gu, "")
+    .replace(/[★☆•·]/g, "")
+    .replace(/[（【\[]/g, "(")
+    .replace(/[）】\]]/g, ")")
+    .replace(/[^\p{L}\p{N}()%+\-./]+/gu, "")
 }
 
-export const BIOMARKER_CATALOG = [
-  { code: "HGB", name: "Hemoglobin", category: "Blood Count", aliases: ["HGB", "HB", "HEMOGLOBIN", "血红蛋白"] },
-  { code: "WBC", name: "White Blood Cells", category: "Blood Count", aliases: ["WBC", "WHITEBLOODCELLS", "白细胞", "白细胞计数"] },
-  { code: "RBC", name: "Red Blood Cells", category: "Blood Count", aliases: ["RBC", "REDBLOODCELLS", "红细胞", "红细胞计数"] },
-  { code: "PLT", name: "Platelets", category: "Blood Count", aliases: ["PLT", "PLATELETS", "血小板", "血小板计数"] },
-  { code: "HCT", name: "Hematocrit", category: "Blood Count", aliases: ["HCT", "HEMATOCRIT", "红细胞压积"] },
-  { code: "ALT", name: "ALT (Alanine Aminotransferase)", category: "Liver Function", aliases: ["ALT", "谷丙转氨酶", "丙氨酸氨基转移酶"] },
-  { code: "AST", name: "AST (Aspartate Aminotransferase)", category: "Liver Function", aliases: ["AST", "谷草转氨酶", "天门冬氨酸氨基转移酶"] },
-  { code: "ALP", name: "Alkaline Phosphatase", category: "Liver Function", aliases: ["ALP", "AKP", "碱性磷酸酶"] },
-  { code: "GGT", name: "Gamma-Glutamyl Transferase", category: "Liver Function", aliases: ["GGT", "Γ-GT", "谷氨酰转肽酶", "谷氨酰基转移酶"] },
-  { code: "TBIL", name: "Total Bilirubin", category: "Liver Function", aliases: ["TBIL", "总胆红素"] },
-  { code: "ALB", name: "Albumin", category: "Liver Function", aliases: ["ALB", "ALBUMIN", "白蛋白"] },
-  { code: "TP", name: "Total Protein", category: "Liver Function", aliases: ["TP", "TOTALPROTEIN", "总蛋白"] },
-  { code: "CRE", name: "Creatinine", category: "Kidney Function", aliases: ["CRE", "CR", "CREATININE", "肌酐"] },
-  { code: "BUN", name: "Blood Urea Nitrogen", category: "Kidney Function", aliases: ["BUN", "UREANITROGEN", "尿素氮"] },
-  { code: "UA", name: "Uric Acid", category: "Kidney Function", aliases: ["UA", "URICACID", "尿酸"] },
-  { code: "EGFR", name: "Estimated Glomerular Filtration Rate", category: "Kidney Function", aliases: ["EGFR", "估算肾小球滤过率"] },
-  { code: "GLU", name: "Glucose", category: "Metabolic", aliases: ["GLU", "GLUCOSE", "血糖", "葡萄糖", "空腹血糖"] },
-  { code: "HBA1C", name: "HbA1c", category: "Metabolic", aliases: ["HBA1C", "HbA1c", "糖化血红蛋白", "糖化血红蛋白A1C"] },
-  { code: "TC", name: "Total Cholesterol", category: "Metabolic", aliases: ["TC", "TOTALCHOLESTEROL", "总胆固醇"] },
-  { code: "TG", name: "Triglycerides", category: "Metabolic", aliases: ["TG", "TRIGLYCERIDES", "甘油三酯"] },
-  { code: "HDL-C", name: "HDL Cholesterol", category: "Metabolic", aliases: ["HDL-C", "HDLC", "高密度脂蛋白胆固醇"] },
-  { code: "LDL-C", name: "LDL Cholesterol", category: "Metabolic", aliases: ["LDL-C", "LDLC", "低密度脂蛋白胆固醇"] },
-  { code: "TSH", name: "Thyroid Stimulating Hormone", category: "Endocrine", aliases: ["TSH", "促甲状腺激素"] },
-  { code: "FT3", name: "Free Triiodothyronine", category: "Endocrine", aliases: ["FT3", "游离三碘甲状腺原氨酸"] },
-  { code: "FT4", name: "Free Thyroxine", category: "Endocrine", aliases: ["FT4", "游离甲状腺素"] },
-  { code: "Na", name: "Sodium", category: "Electrolytes", aliases: ["NA", "SODIUM", "钠"] },
-  { code: "K", name: "Potassium", category: "Electrolytes", aliases: ["K", "POTASSIUM", "钾"] },
-  { code: "Cl", name: "Chloride", category: "Electrolytes", aliases: ["CL", "CHLORIDE", "氯"] },
-  { code: "Ca", name: "Calcium", category: "Electrolytes", aliases: ["CA", "CALCIUM", "钙"] },
+function normalizeCode(value) {
+  return `${value ?? ""}`
+    .trim()
+    .toUpperCase()
+    .replace(/0/g, "O")
+    .replace(/[★☆•·]/g, "")
+    .replace(/[^\p{L}\p{N}%+\-./]+/gu, "")
+}
+
+function stripDecorators(value) {
+  return `${value ?? ""}`
+    .replace(/[★☆•·]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function stripBracketedCode(value) {
+  return stripDecorators(value).replace(/\s*[\[【(（][^\]】)）]+[\]】)）]\s*/g, " ").replace(/\s+/g, " ").trim()
+}
+
+function extractCodeHints(value) {
+  const hints = new Set()
+  const text = stripDecorators(value)
+
+  for (const match of text.matchAll(/[\[【(（]([^\]】)）]+)[\]】)）]/g)) {
+    const normalized = normalizeCode(match[1])
+
+    if (normalized) {
+      hints.add(normalized)
+    }
+  }
+
+  const slashToken = text.match(/\b([A-Z][A-Z0-9]{0,5}(?:\/[A-Z][A-Z0-9]{0,5})+)\b/)
+
+  if (slashToken) {
+    hints.add(normalizeCode(slashToken[1]))
+  }
+
+  return [...hints]
+}
+
+const EXTRA_BIOMARKER_REFERENCE = [
+  {
+    code: "WBC",
+    name: "White Blood Cell",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "4.0-10.0 10^9/L",
+    aliases: ["WBC", "WHITE BLOOD CELL", "白细胞计数"],
+  },
+  {
+    code: "RBC",
+    name: "Red Blood Cell",
+    category: "CBC Core",
+    categoryLabel: "血液常规相关",
+    referenceText: "3.5-6.0 10^12/L",
+    aliases: ["RBC", "RED BLOOD CELL", "红细胞计数"],
+  },
+  {
+    code: "HGB",
+    name: "Hemoglobin",
+    category: "CBC Core",
+    categoryLabel: "血液常规相关",
+    referenceText: "120-165 g/L",
+    aliases: ["HGB", "HEMOGLOBIN", "血红蛋白"],
+  },
+  {
+    code: "HCT",
+    name: "Hematocrit",
+    category: "CBC Core",
+    categoryLabel: "血液常规相关",
+    referenceText: "40.0-50.0 %",
+    aliases: ["HCT", "HEMATOCRIT", "红细胞比积", "红细胞压积"],
+  },
+  {
+    code: "MCV",
+    name: "Mean Corpuscular Volume",
+    category: "Red Cell Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "80.0-100.0 fl",
+    aliases: ["MCV", "MEAN CORPUSCULAR VOLUME", "平均红细胞体积"],
+  },
+  {
+    code: "MCH",
+    name: "Mean Corpuscular Hemoglobin",
+    category: "Red Cell Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "27.3-34.4 pg",
+    aliases: ["MCH", "MEAN CORPUSCULAR HEMOGLOBIN", "平均红细胞血红蛋白含量", "平均红细胞血红蛋白量"],
+  },
+  {
+    code: "MCHC",
+    name: "Mean Corpuscular Hemoglobin Concentration",
+    category: "Red Cell Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "320.0-360.0 g/L",
+    aliases: ["MCHC", "MEAN CORPUSCULAR HEMOGLOBIN CONCENTRATION", "平均红细胞血红蛋白浓度"],
+  },
+  {
+    code: "RDW-SD",
+    name: "Red Cell Distribution Width SD",
+    category: "Red Cell Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "37.0-54.0 fl",
+    aliases: ["RDW-SD", "红细胞体积分布宽度-SD"],
+  },
+  {
+    code: "RDW-CV",
+    name: "Red Cell Distribution Width CV",
+    category: "Red Cell Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "11.0-16.0 %",
+    aliases: ["RDW-CV", "红细胞体积分布宽度-CV"],
+  },
+  {
+    code: "NEUT%",
+    name: "Neutrophil Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "50.0-70.0 %",
+    aliases: ["NEUT%", "中性粒细胞%", "中性粒细胞百分比"],
+  },
+  {
+    code: "LYMPH%",
+    name: "Lymphocyte Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "20.0-40.0 %",
+    aliases: ["LYMPH%", "淋巴细胞%", "淋巴细胞百分比"],
+  },
+  {
+    code: "MONO%",
+    name: "Monocyte Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "3.0-8.0 %",
+    aliases: ["MONO%", "单核细胞%", "单核细胞百分比"],
+  },
+  {
+    code: "EOS%",
+    name: "Eosinophil Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.0-5.0 %",
+    aliases: ["EOS%", "嗜酸性粒细胞%", "嗜酸性粒细胞百分比"],
+  },
+  {
+    code: "BASO%",
+    name: "Basophil Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.0-1.0 %",
+    aliases: ["BASO%", "嗜碱性粒细胞%", "嗜碱性粒细胞百分比"],
+  },
+  {
+    code: "NEUT#",
+    name: "Neutrophil Absolute Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "1.5-7.0 10^9/L",
+    aliases: ["NEUT#", "中性粒细胞绝对数"],
+  },
+  {
+    code: "LYMPH#",
+    name: "Lymphocyte Absolute Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.8-4.0 10^9/L",
+    aliases: ["LYMPH#", "淋巴细胞绝对数"],
+  },
+  {
+    code: "MONO#",
+    name: "Monocyte Absolute Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.12-0.80 10^9/L",
+    aliases: ["MONO#", "单核细胞绝对数"],
+  },
+  {
+    code: "EOS#",
+    name: "Eosinophil Absolute Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.0-0.50 10^9/L",
+    aliases: ["EOS#", "嗜酸性粒细胞绝对数"],
+  },
+  {
+    code: "BASO#",
+    name: "Basophil Absolute Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.0-0.10 10^9/L",
+    aliases: ["BASO#", "嗜碱性粒细胞绝对数"],
+  },
+  {
+    code: "NRBC#",
+    name: "Nucleated Red Blood Cell Absolute Count",
+    category: "CBC Core",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.00-0.02 10^9/L",
+    aliases: ["NRBC#", "有核红细胞绝对计数"],
+  },
+  {
+    code: "NRBC%",
+    name: "Nucleated Red Blood Cell Percentage",
+    category: "CBC Core",
+    categoryLabel: "血液常规相关",
+    referenceText: "<1.00 %",
+    aliases: ["NRBC%", "有核红细胞/白细胞"],
+  },
+  {
+    code: "PLT",
+    name: "Platelet Count",
+    category: "Platelet Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "100-300 10^9/L",
+    aliases: ["PLT", "PLATELET COUNT", "血小板计数"],
+  },
+  {
+    code: "PLTCT",
+    name: "Manual White Cell Differential Count",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["PLTCT", "手工白细胞分类计数", "手工白细胞分类计数:"],
+  },
+  {
+    code: "P-LCC",
+    name: "Large Platelet Ratio",
+    category: "Platelet Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "13.00-43.00 %",
+    aliases: ["P-LCC", "大血小板比率"],
+  },
+  {
+    code: "PCT-PLT",
+    name: "Plateletcrit",
+    category: "Platelet Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "0.06-0.28 %",
+    aliases: ["PCT-PLT", "血小板比容"],
+  },
+  {
+    code: "MPV",
+    name: "Mean Platelet Volume",
+    category: "Platelet Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "6.4-12.1 fl",
+    aliases: ["MPV", "平均血小板体积"],
+  },
+  {
+    code: "PDW",
+    name: "Platelet Distribution Width",
+    category: "Platelet Indices",
+    categoryLabel: "血液常规相关",
+    referenceText: "9.0-17.0 %",
+    aliases: ["PDW", "血小板体积分布宽度"],
+  },
+  {
+    code: "NEUT-BAND%",
+    name: "Band Neutrophil Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["NEUT-BAND%", "中性杆状核粒细胞"],
+  },
+  {
+    code: "NEUT-SEG%",
+    name: "Segmented Neutrophil Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["NEUT-SEG%", "中性分叶核粒细胞"],
+  },
+  {
+    code: "LYMPH-MANUAL%",
+    name: "Manual Lymphocyte Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["LYMPH-MANUAL%", "淋巴细胞"],
+  },
+  {
+    code: "ALY%",
+    name: "Atypical Lymphocyte Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["ALY%", "异型淋巴细胞"],
+  },
+  {
+    code: "MONO-MANUAL%",
+    name: "Manual Monocyte Percentage",
+    category: "CBC Differential",
+    categoryLabel: "血液常规相关",
+    referenceText: "",
+    aliases: ["MONO-MANUAL%", "单核细胞"],
+  },
+  {
+    code: "GLB",
+    name: "Globulin",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "20-35 g/L",
+    aliases: ["GLB", "GLOBULIN", "球蛋白"],
+  },
+  {
+    code: "A/G",
+    name: "Albumin/Globulin Ratio",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "1.09-2.50",
+    aliases: ["A/G", "AG", "白球比例", "白蛋白/球蛋白"],
+  },
+  {
+    code: "AST",
+    name: "Aspartate Aminotransferase",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "0-40 U/L",
+    aliases: ["AST", "天冬氨酸氨基转移酶"],
+  },
+  {
+    code: "LAP",
+    name: "Leucine Aminopeptidase",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "15-125 U/L",
+    aliases: ["LAP", "亮氨酸氨基肽酶"],
+  },
+  {
+    code: "GGT",
+    name: "Gamma-Glutamyl Transferase",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "10-60 U/L",
+    aliases: ["GGT", "γ-谷氨酰转肽酶", "Γ-谷氨酰转肽酶", "谷氨酰转肽酶"],
+  },
+  {
+    code: "CHE",
+    name: "Cholinesterase",
+    category: "Liver Function",
+    categoryLabel: "肝功能",
+    referenceText: "5000-12000 U/L",
+    aliases: ["CHE", "胆碱脂酶", "胆碱酯酶"],
+  },
+  {
+    code: "PA",
+    name: "Prealbumin",
+    category: "Nutrition",
+    categoryLabel: "营养与一般状态",
+    referenceText: "250-400 mg/L",
+    aliases: ["PA", "PREALBUMIN", "前白蛋白"],
+  },
+  {
+    code: "UREA",
+    name: "Urea",
+    category: "Kidney Function",
+    categoryLabel: "肾功能",
+    referenceText: "2.9-7.5 mmol/L",
+    aliases: ["UREA", "尿素"],
+  },
+  {
+    code: "UA",
+    name: "Uric Acid",
+    category: "Kidney Function",
+    categoryLabel: "肾功能",
+    referenceText: "130-430 μmol/L",
+    aliases: ["UA", "URIC", "尿酸"],
+  },
+  {
+    code: "HCO3",
+    name: "Bicarbonate",
+    category: "Electrolytes",
+    categoryLabel: "水合与电解质",
+    referenceText: "20.1-29.0 mmol/L",
+    aliases: ["HCO3", "HC03", "碳酸氢盐", "碳酸氢根"],
+  },
+  {
+    code: "AG",
+    name: "Anion Gap",
+    category: "Electrolytes",
+    categoryLabel: "水合与电解质",
+    referenceText: "",
+    aliases: ["AG", "ANION GAP", "阴离子间隙"],
+  },
+  {
+    code: "OSM",
+    name: "Osmolality",
+    category: "Electrolytes",
+    categoryLabel: "水合与电解质",
+    referenceText: "275-305 mOsm/L",
+    aliases: ["OSM", "渗透压", "渗透压(OSM)"],
+  },
+  {
+    code: "HAV-IgM",
+    name: "Hepatitis A Virus IgM Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HAV-IGM", "甲肝病毒IGM抗体", "甲肝病毒IGM", "HAV IGM"],
+  },
+  {
+    code: "HAV-IgG",
+    name: "Hepatitis A Virus IgG Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HAV-IGG", "甲肝病毒IGG抗体", "甲肝病毒IGG", "HAV IGG"],
+  },
+  {
+    code: "HDV-IgM",
+    name: "Hepatitis D Virus IgM Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HDV-IGM", "丁肝病毒IGM抗体", "丁肝病毒IGM", "HDV IGM"],
+  },
+  {
+    code: "HDV-IgG",
+    name: "Hepatitis D Virus IgG Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HDV-IGG", "丁肝病毒IGG抗体", "丁肝病毒IGG", "HDV IGG"],
+  },
+  {
+    code: "HEV-IgM",
+    name: "Hepatitis E Virus IgM Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HEV-IGM", "戊肝病毒IGM抗体", "戊肝病毒IGM", "HEV IGM"],
+  },
+  {
+    code: "HEV-IgG",
+    name: "Hepatitis E Virus IgG Antibody",
+    category: "Immune Function",
+    categoryLabel: "免疫与感染抗体",
+    referenceText: "<1",
+    aliases: ["HEV-IGG", "戊肝病毒IGG抗体", "戊肝病毒IGG", "HEV IGG"],
+  },
 ]
+
+export const BIOMARKER_CATALOG = [...GENERATED_BIOMARKER_REFERENCE, ...EXTRA_BIOMARKER_REFERENCE]
+
+const aliasLookup = new Map()
+const codeLookup = new Map()
+
+for (const entry of BIOMARKER_CATALOG) {
+  const normalizedCode = normalizeCode(entry.code)
+
+  if (normalizedCode) {
+    codeLookup.set(normalizedCode, entry)
+  }
+
+  for (const alias of [entry.code, ...(entry.aliases ?? [])]) {
+    const normalizedAlias = normalizeText(alias)
+
+    if (normalizedAlias) {
+      aliasLookup.set(normalizedAlias, entry)
+    }
+  }
+}
 
 export function matchBiomarkerMetadata(name) {
   const normalizedName = normalizeText(name)
@@ -45,12 +482,56 @@ export function matchBiomarkerMetadata(name) {
     return null
   }
 
-  return (
-    BIOMARKER_CATALOG.find((entry) =>
-      entry.aliases.some((alias) => {
-        const normalizedAlias = normalizeText(alias)
-        return normalizedName.includes(normalizedAlias) || normalizedAlias.includes(normalizedName)
-      }),
-    ) ?? null
-  )
+  for (const codeHint of extractCodeHints(name)) {
+    const byCode = codeLookup.get(codeHint)
+
+    if (byCode) {
+      return byCode
+    }
+
+    const byAlias = aliasLookup.get(normalizeText(codeHint))
+
+    if (byAlias) {
+      return byAlias
+    }
+  }
+
+  const directAliasMatch = aliasLookup.get(normalizedName)
+
+  if (directAliasMatch) {
+    return directAliasMatch
+  }
+
+  const strippedName = stripBracketedCode(name)
+  const normalizedStrippedName = normalizeText(strippedName)
+
+  if (normalizedStrippedName) {
+    const strippedAliasMatch = aliasLookup.get(normalizedStrippedName)
+
+    if (strippedAliasMatch) {
+      return strippedAliasMatch
+    }
+  }
+
+  if (strippedName.includes("/")) {
+    return null
+  }
+
+  const fuzzyCandidates = BIOMARKER_CATALOG.flatMap((entry) =>
+    entry.aliases
+      .map((alias) => normalizeText(alias))
+      .filter((normalizedAlias) => normalizedAlias && normalizedAlias.length >= 3)
+      .filter(
+        (normalizedAlias) =>
+          normalizedName.includes(normalizedAlias) ||
+          normalizedAlias.includes(normalizedName) ||
+          (normalizedStrippedName && normalizedStrippedName.includes(normalizedAlias)),
+      )
+      .map((normalizedAlias) => ({
+        entry,
+        score: normalizedAlias.length,
+      })),
+  ).sort((left, right) => right.score - left.score)
+
+  return fuzzyCandidates[0]?.entry ?? null
 }
