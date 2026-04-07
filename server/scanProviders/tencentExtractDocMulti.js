@@ -1,6 +1,6 @@
 import tencentcloud from "tencentcloud-sdk-nodejs"
 import { PDFDocument } from "pdf-lib"
-import { normalizeExtractDocMulti } from "./normalizeExtractDocMulti.js"
+import { normalizeExtractDocMultiDetailed } from "./normalizeExtractDocMulti.js"
 
 const OcrClient = tencentcloud.ocr.v20181119.Client
 
@@ -80,6 +80,7 @@ export function createTencentExtractDocMultiScanner({
       )
 
       const allResults = []
+      const allUnknownBiomarkers = []
       const rawPages = []
 
       for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
@@ -90,11 +91,13 @@ export function createTencentExtractDocMultiScanner({
         }
 
         rawPages.push(response)
+        const normalizedPage = normalizeExtractDocMultiDetailed(response, {
+          examType: input.examType,
+        })
         allResults.push(
-          ...normalizeExtractDocMulti(response, {
-            examType: input.examType,
-          }),
+          ...normalizedPage.results,
         )
+        allUnknownBiomarkers.push(...normalizedPage.unknownBiomarkers)
       }
 
       if (!allResults.length) {
@@ -106,6 +109,7 @@ export function createTencentExtractDocMultiScanner({
       return {
         aiAccuracy: input.mimeType === "application/pdf" ? 98.8 : 98.2,
         results: dedupeResults(allResults),
+        unknownBiomarkers: allUnknownBiomarkers,
         rawPages,
         sourceUpdatedAt: input.sourceUpdatedAt,
         resultsGeneratedAt: new Date().toISOString(),

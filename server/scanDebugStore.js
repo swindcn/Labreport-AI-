@@ -45,6 +45,7 @@ export async function writeScanDebugArtifact(input) {
     status: input.status,
     error: input.error ?? null,
     normalizedResults: input.normalizedResults ?? [],
+    unknownBiomarkers: input.unknownBiomarkers ?? [],
     rawPages: input.rawPages ?? [],
   }
 

@@ -22,6 +22,7 @@ test("writeScanDebugArtifact writes normalized results and raw pages when enable
       pagesScanned: 2,
       status: "ready",
       normalizedResults: [{ code: "GLU", value: 6.8 }],
+      unknownBiomarkers: [{ code: "LP-PLA2", rawName: "脂蛋白相关磷脂酶A2(LP-PLA2)" }],
       rawPages: [{ Response: { StructuralList: [] } }],
     })
 
@@ -31,6 +32,7 @@ test("writeScanDebugArtifact writes normalized results and raw pages when enable
     assert.equal(payload.reportId, "report_1")
     assert.equal(payload.pagesScanned, 2)
     assert.equal(payload.normalizedResults[0].code, "GLU")
+    assert.equal(payload.unknownBiomarkers[0].code, "LP-PLA2")
     assert.equal(payload.rawPages.length, 1)
   } finally {
     if (previousDebugDir === undefined) {

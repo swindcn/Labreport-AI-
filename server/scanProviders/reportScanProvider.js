@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { completeMockScanReport } from "../scanService.js"
 import { writeScanDebugArtifact } from "../scanDebugStore.js"
+import { persistUnknownBiomarkers } from "../unknownBiomarkerStore.js"
 import { CURRENT_SCAN_PARSER_VERSION } from "./scanParserVersion.js"
 import { scanWithTencentExtractDocMulti } from "./tencentExtractDocMulti.js"
 
@@ -55,7 +56,15 @@ export async function runReportScan(db, report) {
     pagesScanned: scanResult.pagesScanned,
     status: "ready",
     normalizedResults: scanResult.results,
+    unknownBiomarkers: scanResult.unknownBiomarkers,
     rawPages: scanResult.rawPages,
+  })
+
+  await persistUnknownBiomarkers({
+    provider: "tencent",
+    reportId: report.id,
+    profileId: report.profileId,
+    items: scanResult.unknownBiomarkers,
   })
 
   return {

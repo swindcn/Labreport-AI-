@@ -5,6 +5,7 @@ export type ReportStatus = "processing" | "ready" | "failed";
 export type BiomarkerStatus = "normal" | "high" | "low";
 export type ScanFailureCode = "ocr_failed" | "file_invalid";
 export type ScanScenario = "normal" | "ocr_retryable" | "file_invalid";
+export type UnknownBiomarkerStatus = "pending" | "processed";
 
 export type AuthDraft = {
   email: string;
@@ -182,6 +183,41 @@ export type DeleteProfileResult = {
 export type DeleteReportResult = {
   deletedReportId: string;
   selectedReportId: string | null;
+};
+
+export type UnknownBiomarkerItem = {
+  key: string;
+  provider: string;
+  code: string;
+  rawName: string;
+  normalizedName: string;
+  category: string;
+  unit: string;
+  referenceText: string;
+  sampleRawValue: string;
+  sampleValue: number;
+  occurrences: number;
+  reportIds: string[];
+  profileIds: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  status: UnknownBiomarkerStatus;
+  processedAt?: string | null;
+  processedReason?: "manual" | "local_alias" | null;
+  localAliasId?: string | null;
+};
+
+export type LocalBiomarkerAlias = {
+  id: string;
+  sourceKey?: string | null;
+  code: string;
+  name: string;
+  category: string;
+  referenceText: string;
+  aliases: string[];
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type HealthAppState = {

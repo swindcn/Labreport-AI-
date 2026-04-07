@@ -12,10 +12,13 @@ import type {
   HealthClientState,
   HealthPreferences,
   HealthSession,
+  LocalBiomarkerAlias,
   Profile,
   Report,
   UpdateBiomarkerResultInput,
   UpdateReportInput,
+  UnknownBiomarkerItem,
+  UnknownBiomarkerStatus,
 } from "@/lib/healthDomain";
 import {
   completeMockScanReport,
@@ -80,6 +83,14 @@ export type HealthApi = {
   clientState: {
     get: () => Promise<HealthClientState | null>;
     update: (patch: Partial<HealthClientState>) => Promise<HealthClientState>;
+  };
+  diagnostics: {
+    getUnknownBiomarkers: () => Promise<UnknownBiomarkerItem[]>;
+    updateUnknownBiomarkerStatus: (key: string, status: UnknownBiomarkerStatus) => Promise<UnknownBiomarkerItem>;
+    createLocalBiomarkerAlias: (
+      key: string,
+      input?: Partial<Pick<LocalBiomarkerAlias, "code" | "name" | "category" | "referenceText" | "aliases">>,
+    ) => Promise<{ item: UnknownBiomarkerItem; alias: LocalBiomarkerAlias }>;
   };
 };
 
@@ -750,6 +761,17 @@ function createLocalHealthApi(): HealthApi {
         } as HealthClientState);
       },
     },
+    diagnostics: {
+      async getUnknownBiomarkers() {
+        return [];
+      },
+      async updateUnknownBiomarkerStatus() {
+        throw new Error("Unknown biomarker status updates require the local API.");
+      },
+      async createLocalBiomarkerAlias() {
+        throw new Error("Local biomarker aliases require the local API.");
+      },
+    },
   };
 }
 
@@ -1169,6 +1191,55 @@ function createRemoteHealthApi(baseUrl: string): HealthApi {
       },
       async update(patch) {
         return updateClientState(patch);
+      },
+    },
+    diagnostics: {
+      async getUnknownBiomarkers() {
+        const payload = await requestJson<{ items: UnknownBiomarkerItem[] } | UnknownBiomarkerItem[]>(
+          resourceUrl("/scan/unknown-biomarkers"),
+        );
+
+        if (!payload) {
+          return [];
+        }
+
+        return listFromResponse(payload);
+      },
+      async updateUnknownBiomarkerStatus(key, status) {
+        const payload = await requestJson<UnknownBiomarkerItem>(
+          resourceUrl(`/scan/unknown-biomarkers/${encodeURIComponent(key)}`),
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ status }),
+          },
+        );
+
+        if (!payload) {
+          throw new Error("Unknown biomarker status update returned empty response");
+        }
+
+        return payload;
+      },
+      async createLocalBiomarkerAlias(key, input) {
+        const payload = await requestJson<{ item: UnknownBiomarkerItem; alias: LocalBiomarkerAlias }>(
+          resourceUrl(`/scan/unknown-biomarkers/${encodeURIComponent(key)}/local-alias`),
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(input ?? {}),
+          },
+        );
+
+        if (!payload) {
+          throw new Error("Local biomarker alias creation returned empty response");
+        }
+
+        return payload;
       },
     },
   };

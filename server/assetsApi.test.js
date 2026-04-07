@@ -41,6 +41,8 @@ async function startServer() {
   const dataDir = path.join(runtimeDir, "data");
   const runtimeDataDir = path.join(runtimeDir, "runtime");
   const dbPath = path.join(runtimeDataDir, "health-db.json");
+  const unknownBiomarkerFilePath = path.join(runtimeDataDir, "unknown-biomarkers.json");
+  const localBiomarkerAliasFilePath = path.join(runtimeDataDir, "local-biomarker-aliases.json");
   const port = 9100 + Math.floor(Math.random() * 500);
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -55,6 +57,8 @@ async function startServer() {
       API_RUNTIME_DIR: runtimeDataDir,
       API_DB_PATH: dbPath,
       API_SEED_PATH: seedPath,
+      UNKNOWN_BIOMARKER_FILE: unknownBiomarkerFilePath,
+      LOCAL_BIOMARKER_ALIAS_FILE: localBiomarkerAliasFilePath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -68,6 +72,9 @@ async function startServer() {
 
   return {
     baseUrl,
+    runtimeDir,
+    unknownBiomarkerFilePath,
+    localBiomarkerAliasFilePath,
     async stop() {
       child.kill("SIGTERM");
       await new Promise((resolve) => child.once("exit", resolve));
@@ -467,6 +474,220 @@ test("report result patch updates a single biomarker result", async () => {
     assert.equal(editedResult.value, 41.2);
     assert.equal(editedResult.referenceText, "Ref < 35 U/L");
     assert.equal(editedResult.status, "high");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("unknown biomarker endpoint returns the current user's review queue", async () => {
+  const server = await startServer();
+
+  try {
+    const cookie = await login(server.baseUrl);
+
+    await writeFile(
+      server.unknownBiomarkerFilePath,
+      JSON.stringify(
+        [
+          {
+            key: "LP-PLA2|脂蛋白相关磷脂酶A2(LP-PLA2)||<175",
+            provider: "tencent",
+            code: "LP-PLA2",
+            rawName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            normalizedName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            category: "Other",
+            unit: "ng/mL",
+            referenceText: "<175",
+            sampleRawValue: "248↑",
+            sampleValue: 248,
+            occurrences: 2,
+            reportIds: ["report_x", "report_y"],
+            profileIds: ["profile_me"],
+            firstSeenAt: "2026-04-05T08:00:00.000Z",
+            lastSeenAt: "2026-04-05T10:00:00.000Z",
+            status: "pending",
+            processedAt: null,
+            processedReason: null,
+            localAliasId: null
+          },
+          {
+            key: "private-only",
+            provider: "tencent",
+            code: "PRIVATE",
+            rawName: "Private Marker",
+            normalizedName: "Private Marker",
+            category: "Other",
+            unit: "",
+            referenceText: "",
+            sampleRawValue: "1",
+            sampleValue: 1,
+            occurrences: 1,
+            reportIds: ["report_z"],
+            profileIds: ["profile_other_user"],
+            firstSeenAt: "2026-04-05T08:00:00.000Z",
+            lastSeenAt: "2026-04-05T10:00:00.000Z",
+            status: "pending",
+            processedAt: null,
+            processedReason: null,
+            localAliasId: null
+          }
+        ],
+        null,
+        2,
+      ),
+    );
+
+    const result = await requestJson(server.baseUrl, "/api/scan/unknown-biomarkers", {}, cookie);
+
+    assert.equal(result.response.status, 200);
+    assert.equal(result.payload.items.length, 1);
+    assert.equal(result.payload.items[0].code, "LP-PLA2");
+    assert.equal(result.payload.items[0].occurrences, 2);
+    assert.equal(result.payload.items[0].status, "pending");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("unknown biomarker status can be marked processed and reopened", async () => {
+  const server = await startServer();
+
+  try {
+    const cookie = await login(server.baseUrl);
+    const key = "LP-PLA2|脂蛋白相关磷脂酶A2(LP-PLA2)|ng/mL|<175";
+
+    await writeFile(
+      server.unknownBiomarkerFilePath,
+      JSON.stringify(
+        [
+          {
+            key,
+            provider: "tencent",
+            code: "LP-PLA2",
+            rawName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            normalizedName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            category: "Other",
+            unit: "ng/mL",
+            referenceText: "<175",
+            sampleRawValue: "248↑",
+            sampleValue: 248,
+            occurrences: 1,
+            reportIds: ["report_x"],
+            profileIds: ["profile_me"],
+            firstSeenAt: "2026-04-05T08:00:00.000Z",
+            lastSeenAt: "2026-04-05T10:00:00.000Z",
+            status: "pending",
+            processedAt: null,
+            processedReason: null,
+            localAliasId: null,
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+
+    const processed = await requestJson(
+      server.baseUrl,
+      `/api/scan/unknown-biomarkers/${encodeURIComponent(key)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "processed" }),
+      },
+      cookie,
+    );
+
+    assert.equal(processed.response.status, 200);
+    assert.equal(processed.payload.status, "processed");
+    assert.equal(processed.payload.processedReason, "manual");
+
+    const reopened = await requestJson(
+      server.baseUrl,
+      `/api/scan/unknown-biomarkers/${encodeURIComponent(key)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: "pending" }),
+      },
+      cookie,
+    );
+
+    assert.equal(reopened.response.status, 200);
+    assert.equal(reopened.payload.status, "pending");
+    assert.equal(reopened.payload.processedAt, null);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("creating local biomarker alias marks unknown item processed and writes override file", async () => {
+  const server = await startServer();
+
+  try {
+    const cookie = await login(server.baseUrl);
+    const key = "LP-PLA2|脂蛋白相关磷脂酶A2(LP-PLA2)|ng/mL|<175";
+
+    await writeFile(
+      server.unknownBiomarkerFilePath,
+      JSON.stringify(
+        [
+          {
+            key,
+            provider: "tencent",
+            code: "LP-PLA2",
+            rawName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            normalizedName: "脂蛋白相关磷脂酶A2(LP-PLA2)",
+            category: "Other",
+            unit: "ng/mL",
+            referenceText: "<175",
+            sampleRawValue: "248↑",
+            sampleValue: 248,
+            occurrences: 1,
+            reportIds: ["report_x"],
+            profileIds: ["profile_me"],
+            firstSeenAt: "2026-04-05T08:00:00.000Z",
+            lastSeenAt: "2026-04-05T10:00:00.000Z",
+            status: "pending",
+            processedAt: null,
+            processedReason: null,
+            localAliasId: null,
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+
+    const created = await requestJson(
+      server.baseUrl,
+      `/api/scan/unknown-biomarkers/${encodeURIComponent(key)}/local-alias`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          category: "Cardiovascular",
+          referenceText: "<175",
+        }),
+      },
+      cookie,
+    );
+
+    assert.equal(created.response.status, 201);
+    assert.equal(created.payload.item.status, "processed");
+    assert.equal(created.payload.item.processedReason, "local_alias");
+    assert.equal(created.payload.alias.category, "Cardiovascular");
+
+    const aliasFile = JSON.parse(await readFile(server.localBiomarkerAliasFilePath, "utf8"));
+    assert.equal(aliasFile.length, 1);
+    assert.equal(aliasFile[0].sourceKey, key);
+    assert.ok(aliasFile[0].aliases.includes("脂蛋白相关磷脂酶A2(LP-PLA2)"));
   } finally {
     await server.stop();
   }

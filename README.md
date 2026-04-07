@@ -7,7 +7,7 @@
 - 本地 Node API 服务
 - 腾讯云文档抽取扫描链路
 
-当前版本：`v0.4.0`
+当前版本：`v0.4.1`
 
 ## 项目概览
 
@@ -32,6 +32,15 @@ Vitalis Core 用于帮助用户完成医疗报告上传、OCR/结构化识别、
 - 多页 PDF、扫描 debug 落盘与 parser version 状态提示
 - 本地 mock 扫描兜底
 
+## **v0.4.1 更新摘要**
+
+- 新增未知指标回收机制：OCR 识别后未命中字典的指标会进入运行态队列，便于后续补全别名和分类
+- 新增 `Unknown Biomarkers` 页面与 `GET /api/scan/unknown-biomarkers` 接口，可按当前用户成员范围查看待补全指标
+- Unknown Biomarkers 页面支持搜索、分类筛选、排序，以及候选 JSON 一键复制/下载，便于继续补充 biomarker dictionary
+- 新增本地 alias 覆盖层与 processed 状态：可将 unknown item 一键提升为 local alias，后续扫描优先命中本地规则，不再重复进入待处理队列
+- 补充真实样本回归测试与 provider 级断言，覆盖肝功能页、未知指标采集、scan debug 落盘与运行态聚合
+- 前端 unknown biomarker 页面已接入共享 API 层，避免页面自行拼接远端地址
+
 ## **v0.4.0 更新摘要**
 
 - 接入腾讯云真实识别后的报告保存闭环：上传扫描结果默认不入归档，只有点击 `Save Results` 后才进入 Recent Records、Reports Archive 和 Trends
@@ -39,6 +48,13 @@ Vitalis Core 用于帮助用户完成医疗报告上传、OCR/结构化识别、
 - Report Analysis 支持人工校正 biomarker，当前可编辑 code、name、category、value、unit、reference range、status
 - Reports Archive 与 Trends 页做了多轮信息密度优化：文件名单行省略、状态提示收敛、按钮文本化、趋势分类卡支持默认 5 条和展开更多
 - OCR 规则增强：支持多页 PDF、扫描 debug JSON、parser version 标记，以及病毒抗体类项目（如 `HAV-IgM` / `HDV-IgG` / `HEV-IgM`）的独立映射，避免被错误合并
+
+## **今日更新（2026-04-05）**
+
+- 建立未知指标收集与聚合机制：同名同单位同参考区间的未知项会合并统计 `occurrences`、关联 `reportIds` / `profileIds`
+- 腾讯云多页扫描链路现在会把各页未命中字典的项目一并聚合并落到 `server/data/runtime/unknown-biomarkers.json`
+- Trends 页面新增 `Dictionary Review` 入口，可直接查看待补全指标、回看最近值、参考区间与最后出现时间
+- 新增后端与 parser 回归测试，确保真实样本下的未知指标不会在后续规则调整中被静默丢失
 
 ## **今日更新（2026-04-03）**
 
@@ -182,6 +198,7 @@ npm run dev:api
 - \#/manual-entry：手动添加指标
 - \#/trends：健康趋势分类页
 - \#/biomarker-trends：生物标识物详情页
+- \#/unknown-biomarkers：未知指标回收队列
 - \#/profile-registration：患者信息登记
 - \#/member-list：家庭成员管理
 - \#/register：注册页
@@ -225,6 +242,8 @@ npm run dev:api
 - mock 扫描兜底
 - 扫描失败态
 - 扫描重试
+- 未知指标收集与运行态聚合
+- Unknown Biomarkers 待补全队列
 
 ### **报告查看**
 
@@ -258,6 +277,21 @@ npm run dev:api
 5. 替换报告源文件后，当前报告重新进入待扫描状态
 6. Report Analysis、Report Source、Reports Archive 共用同一份报告资源
 7. 失败报告支持单个重试与批量重试/删除
+8. OCR 未命中字典的指标会进入 unknown biomarker queue，供后续字典补全
+
+## **新增接口与运行态文件**
+
+- `GET /api/scan/unknown-biomarkers`
+  - 仅在登录态下返回当前用户成员范围内的未知指标队列
+- `server/data/runtime/unknown-biomarkers.json`
+  - 运行态聚合文件，不应提交到 Git
+
+## **测试覆盖**
+
+- 扫描 provider 归一化回归：`server/scanProviders/normalizeExtractDocMulti.test.js`
+- 腾讯云多页聚合回归：`server/scanProviders/tencentExtractDocMulti.test.js`
+- 未知指标运行态聚合：`server/unknownBiomarkerStore.test.js`
+- API 集成测试：`server/assetsApi.test.js`
 
 持久化边界：
 

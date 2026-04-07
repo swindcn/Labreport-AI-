@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { PhoneFrame } from "@/components/mobile/PhoneFrame";
 import { Chip } from "@/components/ui/Chip";
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -40,6 +40,7 @@ import {
   profileRelationOptions,
   profileMenu,
 } from "@/lib/healthData";
+import { createHealthApi } from "@/lib/api/healthApi";
 import { useHealthStore } from "@/lib/healthStore";
 import { RouteLink, splitHashPath, useHashPath, type RouteConfig } from "@/lib/hashRouter";
 import {
@@ -48,7 +49,7 @@ import {
   groupArchiveReportsByMonth,
 } from "@/lib/reportsArchiveUtils";
 import { getReportVersionState } from "@/lib/reportVersionState";
-import type { BiomarkerStatus } from "@/lib/healthDomain";
+import type { BiomarkerStatus, UnknownBiomarkerItem, UnknownBiomarkerStatus } from "@/lib/healthDomain";
 
 const inAppTabs = [
   { label: "HOME", to: "/dashboard" },
@@ -59,8 +60,11 @@ const inAppTabs = [
 const PROFILE_FORM_RETURN_KEY = "vitalis-profile-form-return-path";
 const REPORT_SOURCE_RETURN_KEY = "vitalis-report-source-return-path";
 const trendWindowOptions = ["3M", "6M", "12M", "All"] as const;
+const unknownBiomarkerSortOptions = ["Latest Seen", "Most Seen", "Name"] as const;
+const unknownBiomarkerStatusOptions = ["Pending", "Processed", "All"] as const;
 
 type TrendWindow = (typeof trendWindowOptions)[number];
+type UnknownBiomarkerSort = (typeof unknownBiomarkerSortOptions)[number];
 
 function setProfileFormReturnPath(path: string) {
   window.sessionStorage.setItem(PROFILE_FORM_RETURN_KEY, path);
@@ -244,6 +248,16 @@ function formatDateOnlyLabel(value?: string) {
 
 function openFileUrl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function downloadJsonFile(fileName: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function setHashSearchParams(nextPathname: string, nextParams: URLSearchParams) {
@@ -2100,6 +2114,26 @@ function TrendsPage() {
       </section>
 
       <Card className="bg-[#eef4ff]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Dictionary Review</p>
+            <h3 className="mt-2 text-[1.4rem] font-semibold tracking-[-0.03em] text-slate-900">
+              Unknown Biomarkers
+            </h3>
+            <p className="mt-3 text-sm leading-6 text-slate-500">
+              Review scan items that did not match the biomarker dictionary yet, so they can be normalized and added.
+            </p>
+          </div>
+          <RouteLink
+            to="/unknown-biomarkers"
+            className="shrink-0 rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#1E40AF]"
+          >
+            Open
+          </RouteLink>
+        </div>
+      </Card>
+
+      <Card className="bg-[#eef4ff]">
         <h3 className="text-[1.6rem] font-semibold leading-[1.05] tracking-[-0.03em] text-slate-900">
           Comprehensive Health Archive
         </h3>
@@ -2359,6 +2393,368 @@ function BiomarkerTrendsPage() {
           {derived.currentProfile.name}'s tracked biomarkers are rendered from saved reports only. Switch categories and time windows to compare what is recovering, drifting, or staying stable inside the same clinical domain.
         </p>
       </Card>
+    </PhoneFrame>
+  );
+}
+
+function UnknownBiomarkersPage() {
+  const { sync } = useHealthStore();
+  const api = useMemo(() => createHealthApi(), []);
+  const [items, setItems] = useState<UnknownBiomarkerItem[]>([]);
+  const [loading, setLoading] = useState(sync.mode === "remote");
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [sortBy, setSortBy] = useState<UnknownBiomarkerSort>("Latest Seen");
+  const [statusFilter, setStatusFilter] = useState<(typeof unknownBiomarkerStatusOptions)[number]>("Pending");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [workingKey, setWorkingKey] = useState<string | null>(null);
+
+  const loadUnknownBiomarkers = useCallback(() => {
+    if (sync.mode !== "remote") {
+      setItems([]);
+      setLoading(false);
+      setError("Unknown biomarker review is available only when the app is connected to the local API.");
+      return () => {};
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    api.diagnostics
+      .getUnknownBiomarkers()
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        setItems(Array.isArray(payload) ? payload : []);
+        setLoading(false);
+      })
+      .catch((fetchError: unknown) => {
+        if (cancelled) {
+          return;
+        }
+
+        setItems([]);
+        setLoading(false);
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load unknown biomarkers.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, sync.mode]);
+
+  useEffect(() => {
+    const cleanup = loadUnknownBiomarkers();
+    return cleanup;
+  }, [loadUnknownBiomarkers]);
+
+  const pendingCount = useMemo(() => items.filter((item) => item.status !== "processed").length, [items]);
+  const processedCount = useMemo(() => items.filter((item) => item.status === "processed").length, [items]);
+
+  const applyItemUpdate = useCallback((updatedItem: UnknownBiomarkerItem) => {
+    setItems((currentItems) => currentItems.map((item) => (item.key === updatedItem.key ? updatedItem : item)));
+  }, []);
+
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(items.map((item) => item.category || "Other"))).sort((left, right) => left.localeCompare(right)),
+    [items],
+  );
+
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const nextItems = items.filter((item) => {
+      const matchesStatus =
+        statusFilter === "All"
+          ? true
+          : statusFilter === "Pending"
+            ? item.status !== "processed"
+            : item.status === "processed";
+      const matchesCategory = !categoryFilter || (item.category || "Other") === categoryFilter;
+
+      if (!matchesStatus || !matchesCategory) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return [item.code, item.rawName, item.normalizedName, item.category, item.referenceText, item.unit]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    });
+
+    nextItems.sort((left, right) => {
+      if (sortBy === "Most Seen") {
+        if (right.occurrences !== left.occurrences) {
+          return right.occurrences - left.occurrences;
+        }
+
+        return `${left.rawName}`.localeCompare(`${right.rawName}`);
+      }
+
+      if (sortBy === "Name") {
+        return `${left.rawName}`.localeCompare(`${right.rawName}`);
+      }
+
+      return new Date(right.lastSeenAt).getTime() - new Date(left.lastSeenAt).getTime();
+    });
+
+    return nextItems;
+  }, [categoryFilter, items, query, sortBy, statusFilter]);
+
+  const exportCandidates = useMemo(
+    () =>
+      filteredItems.map((item) => ({
+        code: item.code,
+        name: item.normalizedName || item.rawName,
+        category: item.category || "Other",
+        referenceText: item.referenceText || "",
+        aliases: Array.from(new Set([item.code, item.rawName, item.normalizedName].filter(Boolean))),
+        sampleUnit: item.unit,
+        sampleValue: item.sampleValue,
+        sampleRawValue: item.sampleRawValue,
+        occurrences: item.occurrences,
+        lastSeenAt: item.lastSeenAt,
+      })),
+    [filteredItems],
+  );
+
+  const handleCopyCandidates = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(exportCandidates, null, 2));
+      setNotice(`Copied ${exportCandidates.length} candidate entries.`);
+    } catch {
+      setNotice("Clipboard copy failed.");
+    }
+  };
+
+  const handleDownloadCandidates = () => {
+    downloadJsonFile("unknown-biomarkers.candidates.json", exportCandidates);
+    setNotice(`Downloaded ${exportCandidates.length} candidate entries.`);
+  };
+
+  const handleUpdateStatus = async (item: UnknownBiomarkerItem, status: UnknownBiomarkerStatus) => {
+    try {
+      setWorkingKey(item.key);
+      const updated = await api.diagnostics.updateUnknownBiomarkerStatus(item.key, status);
+      applyItemUpdate(updated);
+      setNotice(status === "processed" ? `Marked ${item.code} as processed.` : `Reopened ${item.code}.`);
+    } catch (updateError) {
+      setNotice(updateError instanceof Error ? updateError.message : "Status update failed.");
+    } finally {
+      setWorkingKey(null);
+    }
+  };
+
+  const handleCreateLocalAlias = async (item: UnknownBiomarkerItem) => {
+    try {
+      setWorkingKey(item.key);
+      const payload = await api.diagnostics.createLocalBiomarkerAlias(item.key, {
+        code: item.code,
+        name: item.normalizedName || item.rawName,
+        category: item.category || "Other",
+        referenceText: item.referenceText || "",
+        aliases: Array.from(new Set([item.rawName, item.normalizedName, item.code].filter(Boolean))),
+      });
+      applyItemUpdate(payload.item);
+      setNotice(`Created local alias for ${item.code}. Future scans will map it automatically.`);
+    } catch (aliasError) {
+      setNotice(aliasError instanceof Error ? aliasError.message : "Local alias creation failed.");
+    } finally {
+      setWorkingKey(null);
+    }
+  };
+
+  return (
+    <PhoneFrame header={<TopBar left={<RouteLink to="/trends">←</RouteLink>} title="Unknown Biomarkers" />}>
+      <Card className="bg-[#eef4ff]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm text-slate-500">Dictionary Review Queue</p>
+            <h2 className="mt-2 text-[1.7rem] font-semibold tracking-[-0.03em] text-slate-900">
+              {pendingCount} pending aliases
+            </h2>
+            <p className="mt-2 text-sm text-slate-500">
+              {processedCount > 0 ? `${processedCount} processed` : `${items.length} total`}
+            </p>
+          </div>
+          <Chip label={sync.mode === "remote" ? "API" : "LOCAL"} tone={sync.mode === "remote" ? "accent" : "warning"} />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
+          <button type="button" onClick={handleCopyCandidates} className="font-semibold text-[#1E40AF]">
+            Copy JSON
+          </button>
+          <button type="button" onClick={handleDownloadCandidates} className="font-semibold text-[#1E40AF]">
+            Download JSON
+          </button>
+          {notice ? <p className="text-slate-500">{notice}</p> : null}
+        </div>
+      </Card>
+
+      {!loading && !error ? (
+        <Card className="bg-[#f8fbff]">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Label>Search</Label>
+              <TextInput value={query} onChange={setQuery} placeholder="Code, alias, reference..." />
+            </div>
+            <div>
+              <Label>Status</Label>
+              <SelectInput
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value as (typeof unknownBiomarkerStatusOptions)[number])}
+                placeholder="Status"
+                options={[...unknownBiomarkerStatusOptions]}
+              />
+            </div>
+            <div>
+              <Label>Category</Label>
+              <SelectInput
+                value={categoryFilter}
+                onChange={setCategoryFilter}
+                placeholder="All categories"
+                options={categoryOptions}
+              />
+            </div>
+            <div>
+              <Label>Sort</Label>
+              <SelectInput
+                value={sortBy}
+                onChange={(value) => setSortBy(value as UnknownBiomarkerSort)}
+                placeholder="Sort"
+                options={[...unknownBiomarkerSortOptions]}
+              />
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
+      {loading ? (
+        <Card className="bg-[#f8fbff]">
+          <p className="text-sm text-slate-500">Loading unknown biomarker queue…</p>
+        </Card>
+      ) : null}
+
+      {!loading && error ? (
+        <Card className="bg-[#fff4f4]">
+          <p className="text-sm font-semibold text-[#d92d20]">{error}</p>
+        </Card>
+      ) : null}
+
+      {!loading && !error && items.length === 0 ? (
+        <Card className="bg-[#f8fbff]">
+          <h3 className="text-[1.2rem] font-semibold text-slate-900">No unknown biomarkers queued</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            Newly scanned items that do not match the catalog will appear here for dictionary follow-up.
+          </p>
+        </Card>
+      ) : null}
+
+      {!loading && !error && items.length > 0 && filteredItems.length === 0 ? (
+        <Card className="bg-[#f8fbff]">
+          <h3 className="text-[1.2rem] font-semibold text-slate-900">No matches for current filters</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-500">Clear the search or category filter to review the full queue again.</p>
+        </Card>
+      ) : null}
+
+      {!loading && !error && filteredItems.length > 0 ? (
+        <div className="space-y-3">
+          {filteredItems.map((item) => (
+            <Card key={item.key}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900">{item.code}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">{item.rawName}</p>
+                  {item.normalizedName && item.normalizedName !== item.rawName ? (
+                    <p className="mt-1 text-sm text-slate-400">{item.normalizedName}</p>
+                  ) : null}
+                </div>
+                <Chip
+                  label={item.status === "processed" ? "Processed" : `${item.occurrences}x`}
+                  tone={item.status === "processed" ? "success" : "accent"}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-slate-400">Fallback Category</p>
+                  <p className="mt-1 font-semibold text-slate-900">{item.category || "Other"}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-slate-400">Latest Value</p>
+                  <p className="mt-1 font-semibold text-slate-900">
+                    {`${item.sampleValue ?? ""}`.trim()} {item.unit}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-slate-400">Reference</p>
+                  <p className="mt-1 text-slate-600">{item.referenceText || "—"}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-slate-400">Last Seen</p>
+                  <p className="mt-1 text-slate-600">{formatDateOnlyLabel(item.lastSeenAt)}</p>
+                </div>
+              </div>
+              {item.status === "processed" ? (
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-slate-400">Processed Reason</p>
+                    <p className="mt-1 text-slate-600">{item.processedReason === "local_alias" ? "Local Alias" : "Reviewed"}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-slate-400">Processed At</p>
+                    <p className="mt-1 text-slate-600">{formatDateOnlyLabel(item.processedAt ?? undefined)}</p>
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-4 border-t border-[#eef2fb] pt-4">
+                <p className="text-slate-400">Candidate Export</p>
+                <p className="mt-1 truncate text-sm text-slate-600" title={`${item.code} | ${item.rawName} | ${item.category || "Other"}`}>
+                  {`${item.code} | ${item.rawName} | ${item.category || "Other"}`}
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
+                  {item.status !== "processed" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleCreateLocalAlias(item)}
+                        disabled={workingKey === item.key}
+                        className="font-semibold text-[#1E40AF] disabled:text-slate-400"
+                      >
+                        Create Local Alias
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleUpdateStatus(item, "processed")}
+                        disabled={workingKey === item.key}
+                        className="font-semibold text-slate-600 disabled:text-slate-400"
+                      >
+                        Mark Processed
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleUpdateStatus(item, "pending")}
+                      disabled={workingKey === item.key}
+                      className="font-semibold text-[#1E40AF] disabled:text-slate-400"
+                    >
+                      Reopen
+                    </button>
+                  )}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : null}
     </PhoneFrame>
   );
 }
@@ -3266,6 +3662,12 @@ export const screenRoutes: RouteConfig[] = [
     title: "Biomarker Trends",
     description: "生物标识物详情",
     element: <BiomarkerTrendsPage />,
+  },
+  {
+    path: "/unknown-biomarkers",
+    title: "Unknown Biomarkers",
+    description: "字典未命中的扫描指标清单",
+    element: <UnknownBiomarkersPage />,
   },
   {
     path: "/profile-registration",

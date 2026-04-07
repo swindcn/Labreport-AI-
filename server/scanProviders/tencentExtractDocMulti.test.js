@@ -44,6 +44,7 @@ test("Tencent scanner walks every PDF page and merges biomarker results", async 
 
   assert.deepEqual(calledPages, [1, 2])
   assert.equal(result.results.length, 4)
+  assert.deepEqual(result.unknownBiomarkers, [])
   assert.deepEqual(
     result.results.map((item) => item.code),
     ["HGB", "WBC", "GLU", "CRE"],

@@ -1,9 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { normalizeExtractDocMulti } from "./normalizeExtractDocMulti.js"
+import { normalizeExtractDocMulti, normalizeExtractDocMultiDetailed } from "./normalizeExtractDocMulti.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -270,4 +271,68 @@ test("normalizeExtractDocMulti keeps virus antibody IgM and IgG analytes distinc
   )
   assert.ok(results.every((item) => item.category === "Immune Function"))
   assert.ok(results.every((item) => item.unit === "S/CO"))
+})
+
+test("normalizeExtractDocMulti maps a real-style liver panel fixture", async () => {
+  const fixture = await readFixture("liver-panel-page-1.json")
+  const results = normalizeExtractDocMulti(fixture, { examType: "Routine" })
+
+  assert.deepEqual(results.map((item) => item.code), ["ALT", "AST", "GGT"])
+  assert.equal(results.find((item) => item.code === "ALT")?.category, "Liver Function")
+  assert.equal(results.find((item) => item.code === "ALT")?.status, "normal")
+  assert.equal(results.find((item) => item.code === "GGT")?.status, "high")
+})
+
+test("normalizeExtractDocMultiDetailed collects unknown biomarkers for dictionary follow-up", async () => {
+  const fixture = await readFixture("unknown-biomarker-page.json")
+  const payload = normalizeExtractDocMultiDetailed(fixture, { examType: "Routine" })
+
+  assert.deepEqual(payload.results.map((item) => item.code), ["LP-PLA2", "hs-CRP"])
+  assert.equal(payload.unknownBiomarkers.length, 1)
+  assert.equal(payload.unknownBiomarkers[0].code, "LP-PLA2")
+  assert.equal(payload.unknownBiomarkers[0].rawName, "脂蛋白相关磷脂酶A2(LP-PLA2)")
+  assert.equal(payload.unknownBiomarkers[0].category, "Other")
+})
+
+test("normalizeExtractDocMultiDetailed applies local biomarker aliases before queueing unknown items", async () => {
+  const runtimeDir = await mkdtemp(path.join(tmpdir(), "vitalis-local-alias-"))
+  const previousFile = process.env.LOCAL_BIOMARKER_ALIAS_FILE
+  process.env.LOCAL_BIOMARKER_ALIAS_FILE = path.join(runtimeDir, "local-biomarker-aliases.json")
+
+  try {
+    await writeFile(
+      process.env.LOCAL_BIOMARKER_ALIAS_FILE,
+      JSON.stringify(
+        [
+          {
+            id: "alias_lp_pla2",
+            sourceKey: "LP-PLA2|脂蛋白相关磷脂酶A2(LP-PLA2)|ng/mL|<175",
+            code: "LP-PLA2",
+            name: "Lipoprotein-associated Phospholipase A2",
+            category: "Cardiovascular",
+            referenceText: "<175",
+            aliases: ["LP-PLA2", "脂蛋白相关磷脂酶A2(LP-PLA2)"],
+            active: true,
+            createdAt: "2026-04-06T08:00:00.000Z",
+            updatedAt: "2026-04-06T08:00:00.000Z",
+          },
+        ],
+        null,
+        2,
+      ),
+    )
+
+    const fixture = await readFixture("unknown-biomarker-page.json")
+    const payload = normalizeExtractDocMultiDetailed(fixture, { examType: "Routine" })
+
+    assert.deepEqual(payload.results.map((item) => item.code), ["LP-PLA2", "hs-CRP"])
+    assert.equal(payload.results.find((item) => item.code === "LP-PLA2")?.category, "Cardiovascular")
+    assert.equal(payload.unknownBiomarkers.length, 0)
+  } finally {
+    if (previousFile === undefined) {
+      delete process.env.LOCAL_BIOMARKER_ALIAS_FILE
+    } else {
+      process.env.LOCAL_BIOMARKER_ALIAS_FILE = previousFile
+    }
+  }
 })

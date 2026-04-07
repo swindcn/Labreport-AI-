@@ -1,0 +1,50 @@
+{
+  "Response": {
+    "StructuralList": [
+      {
+        "Groups": [
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "脂蛋白相关磷脂酶A2(LP-PLA2)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "248↑" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "ng/mL" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "<175" }
+              }
+            ]
+          },
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "超敏C反应蛋白(hs-CRP)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "2.1" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "mg/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "<3.0" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

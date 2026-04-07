@@ -1,0 +1,70 @@
+{
+  "Response": {
+    "StructuralList": [
+      {
+        "Groups": [
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "丙氨酸氨基转移酶(ALT)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "46" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "U/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "9~50" }
+              }
+            ]
+          },
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "天门冬氨酸氨基转移酶(AST)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "18" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "U/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "15~40" }
+              }
+            ]
+          },
+          {
+            "Lines": [
+              {
+                "Key": { "AutoName": "项目名称", "ConfigName": "项目名称" },
+                "Value": { "AutoContent": "γ-谷氨酰转肽酶(GGT)" }
+              },
+              {
+                "Key": { "AutoName": "结果", "ConfigName": "结果" },
+                "Value": { "AutoContent": "63↑" }
+              },
+              {
+                "Key": { "AutoName": "单位", "ConfigName": "单位" },
+                "Value": { "AutoContent": "U/L" }
+              },
+              {
+                "Key": { "AutoName": "参考范围", "ConfigName": "参考范围" },
+                "Value": { "AutoContent": "10~60" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 import { GENERATED_BIOMARKER_REFERENCE } from "./biomarkerReferenceData.generated.js"
+import { readLocalBiomarkerAliasesSync } from "../localBiomarkerAliasStore.js"
 
 function normalizeText(value) {
   return `${value ?? ""}`
@@ -456,26 +457,55 @@ const EXTRA_BIOMARKER_REFERENCE = [
 
 export const BIOMARKER_CATALOG = [...GENERATED_BIOMARKER_REFERENCE, ...EXTRA_BIOMARKER_REFERENCE]
 
-const aliasLookup = new Map()
-const codeLookup = new Map()
+function buildCatalogState(catalog) {
+  const aliasLookup = new Map()
+  const codeLookup = new Map()
 
-for (const entry of BIOMARKER_CATALOG) {
-  const normalizedCode = normalizeCode(entry.code)
+  for (const entry of catalog) {
+    const normalizedCode = normalizeCode(entry.code)
 
-  if (normalizedCode) {
-    codeLookup.set(normalizedCode, entry)
+    if (normalizedCode) {
+      codeLookup.set(normalizedCode, entry)
+    }
+
+    for (const alias of [entry.code, ...(entry.aliases ?? [])]) {
+      const normalizedAlias = normalizeText(alias)
+
+      if (normalizedAlias) {
+        aliasLookup.set(normalizedAlias, entry)
+      }
+    }
   }
 
-  for (const alias of [entry.code, ...(entry.aliases ?? [])]) {
-    const normalizedAlias = normalizeText(alias)
-
-    if (normalizedAlias) {
-      aliasLookup.set(normalizedAlias, entry)
-    }
+  return {
+    catalog,
+    aliasLookup,
+    codeLookup,
   }
 }
 
+const baseCatalogState = buildCatalogState(BIOMARKER_CATALOG)
+
+function getCombinedCatalogState() {
+  const localAliases = readLocalBiomarkerAliasesSync().map((item) => ({
+    code: item.code,
+    name: item.name,
+    category: item.category,
+    categoryLabel: item.category,
+    referenceText: item.referenceText ?? "",
+    aliases: Array.isArray(item.aliases) ? item.aliases : [],
+    source: "local",
+  }))
+
+  if (localAliases.length === 0) {
+    return baseCatalogState
+  }
+
+  return buildCatalogState([...BIOMARKER_CATALOG, ...localAliases])
+}
+
 export function matchBiomarkerMetadata(name) {
+  const { catalog, aliasLookup, codeLookup } = getCombinedCatalogState()
   const normalizedName = normalizeText(name)
 
   if (!normalizedName) {
@@ -517,7 +547,7 @@ export function matchBiomarkerMetadata(name) {
     return null
   }
 
-  const fuzzyCandidates = BIOMARKER_CATALOG.flatMap((entry) =>
+  const fuzzyCandidates = catalog.flatMap((entry, index) =>
     entry.aliases
       .map((alias) => normalizeText(alias))
       .filter((normalizedAlias) => normalizedAlias && normalizedAlias.length >= 3)
@@ -530,8 +560,15 @@ export function matchBiomarkerMetadata(name) {
       .map((normalizedAlias) => ({
         entry,
         score: normalizedAlias.length,
+        priority: catalog.length - index,
       })),
-  ).sort((left, right) => right.score - left.score)
+  ).sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score
+    }
+
+    return right.priority - left.priority
+  })
 
   return fuzzyCandidates[0]?.entry ?? null
 }

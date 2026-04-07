@@ -8,6 +8,8 @@ import { createLocalAssetStore } from "./assetStore.js"
 import { createMockUploadedReport, retryMockScanReport } from "./scanService.js"
 import { mapScanErrorToReport, runReportScan } from "./scanProviders/reportScanProvider.js"
 import { CURRENT_SCAN_PARSER_VERSION } from "./scanProviders/scanParserVersion.js"
+import { upsertLocalBiomarkerAlias } from "./localBiomarkerAliasStore.js"
+import { listUnknownBiomarkers, updateUnknownBiomarker } from "./unknownBiomarkerStore.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -242,6 +244,19 @@ function getReportResultAction(pathname) {
     reportId: decodeURIComponent(match[1]),
     resultId: decodeURIComponent(match[2]),
   }
+}
+
+function getUnknownBiomarkerActionKey(pathname, suffix = "") {
+  const pattern = suffix
+    ? new RegExp(`^/scan/unknown-biomarkers/([^/]+)${suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)
+    : /^\/scan\/unknown-biomarkers\/([^/]+)$/
+  const match = pathname.match(pattern)
+
+  if (!match) {
+    return null
+  }
+
+  return decodeURIComponent(match[1])
 }
 
 function buildUpdatedReportSource(report, input) {
@@ -697,6 +712,124 @@ async function requestListener(request, response) {
         200,
         {
           items: currentUserId ? listReportsForUser(db, currentUserId) : [],
+        },
+        corsHeaders,
+      )
+      return
+    }
+
+    if (request.method === "GET" && pathname === "/scan/unknown-biomarkers") {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const profileIds = listProfilesForUser(db, currentUserId).map((profile) => profile.id)
+      const items = await listUnknownBiomarkers(profileIds)
+      json(
+        response,
+        200,
+        {
+          items,
+        },
+        corsHeaders,
+      )
+      return
+    }
+
+    if (request.method === "PATCH" && pathname.startsWith("/scan/unknown-biomarkers/")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const itemKey = getUnknownBiomarkerActionKey(pathname)
+      const body = await readBody(request)
+      const nextStatus = body.status === "processed" ? "processed" : body.status === "pending" ? "pending" : null
+
+      if (!itemKey || !nextStatus) {
+        badRequest(response, "Unknown biomarker key or status is invalid", corsHeaders)
+        return
+      }
+
+      const profileIds = listProfilesForUser(db, currentUserId).map((profile) => profile.id)
+      const ownedItem = (await listUnknownBiomarkers(profileIds)).find((item) => item.key === itemKey)
+
+      if (!ownedItem) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const updated = await updateUnknownBiomarker(itemKey, {
+        status: nextStatus,
+        processedReason: nextStatus === "processed" ? "manual" : null,
+      })
+
+      if (!updated) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      json(response, 200, updated, corsHeaders)
+      return
+    }
+
+    if (request.method === "POST" && pathname.startsWith("/scan/unknown-biomarkers/") && pathname.endsWith("/local-alias")) {
+      if (!currentUserId) {
+        unauthorized(response, corsHeaders)
+        return
+      }
+
+      const itemKey = getUnknownBiomarkerActionKey(pathname, "/local-alias")
+
+      if (!itemKey) {
+        badRequest(response, "Unknown biomarker key is invalid", corsHeaders)
+        return
+      }
+
+      const profileIds = listProfilesForUser(db, currentUserId).map((profile) => profile.id)
+      const item = (await listUnknownBiomarkers(profileIds)).find((entry) => entry.key === itemKey)
+
+      if (!item) {
+        notFound(response, corsHeaders)
+        return
+      }
+
+      const body = await readBody(request)
+      const aliases = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(body.aliases) ? body.aliases : []),
+            item.rawName,
+            item.normalizedName,
+            item.code,
+          ]
+            .map((alias) => `${alias ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      )
+
+      const localAlias = await upsertLocalBiomarkerAlias({
+        sourceKey: item.key,
+        code: `${body.code ?? item.code}`.trim(),
+        name: `${body.name ?? item.normalizedName ?? item.rawName}`.trim(),
+        category: `${body.category ?? item.category ?? "Other"}`.trim(),
+        referenceText: `${body.referenceText ?? item.referenceText ?? ""}`.trim(),
+        aliases,
+      })
+
+      const updated = await updateUnknownBiomarker(itemKey, {
+        status: "processed",
+        processedReason: "local_alias",
+        localAliasId: localAlias.id,
+      })
+
+      json(
+        response,
+        201,
+        {
+          alias: localAlias,
+          item: updated,
         },
         corsHeaders,
       )

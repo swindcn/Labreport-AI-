@@ -171,6 +171,7 @@ function resolveCodeAndName(name) {
 
   if (metadata) {
     return {
+      matched: true,
       code: canonicalizeCode(metadata.code),
       name: metadata.name,
       category: metadata.category,
@@ -184,6 +185,7 @@ function resolveCodeAndName(name) {
   const normalizedName = cleanedName.replace(/\s+/g, " ").trim()
 
   return {
+    matched: false,
     code: canonicalizeCode(codeMatch?.[1] || normalizedName.toUpperCase()),
     name: normalizedName,
     category: null,
@@ -193,25 +195,59 @@ function resolveCodeAndName(name) {
 
 function fallbackCategory(name, examType) {
   const text = cleanLabelText(name).toUpperCase().replace(/0/g, "O")
+  const codeTokens = new Set(
+    text
+      .split(/[^A-Z0-9%+#/.-]+/)
+      .map((token) => token.trim())
+      .filter(Boolean),
+  )
 
   if (text.includes("/") && !/A\/G/.test(text)) {
     return examType === "Clinical" ? "Clinical Other" : "Other"
   }
 
-  if (/(ALT|AST|ALP|GGT|TBIL|DBIL|IBIL|ALB|TP|GLB|A\/G|CHE|LAP|胆红素|白蛋白|总蛋白|球蛋白|转氨酶|酯酶)/.test(text)) {
+  if (
+    ["ALT", "AST", "ALP", "GGT", "TBIL", "DBIL", "IBIL", "ALB", "TP", "GLB", "A/G", "CHE", "LAP"].some((token) =>
+      codeTokens.has(token),
+    ) ||
+    /(胆红素|白蛋白|总蛋白|球蛋白|转氨酶|酯酶)/.test(text)
+  ) {
     return "Liver Function"
   }
-  if (/(UREA|CREA|CRE|CR|BUN|UA|URIC|EGFR|肌酐|尿素氮|尿素|尿酸)/.test(text)) return "Kidney Function"
-  if (/(GLU|HBA1C|TC|TG|LDL|HDL|血糖|葡萄糖|胆固醇)/.test(text)) return "Metabolic"
-  if (/(MPV|PDW|P-LCC|PLT|血小板|大血小板|平均血小板|血小板比容)/.test(text)) return "Platelet Indices"
-  if (/(MCV|MCH|MCHC|RDW|红细胞体积分布宽度|平均红细胞体积|平均红细胞血红蛋白)/.test(text)) return "Red Cell Indices"
-  if (/(NEUT|LYMPH|MONO|EOS|BASO|中性粒细胞|淋巴细胞|单核细胞|嗜酸性粒细胞|嗜碱性粒细胞|异型淋巴细胞)/.test(text)) {
+  if (
+    ["UREA", "CREA", "CRE", "CR", "BUN", "UA", "URIC", "EGFR"].some((token) => codeTokens.has(token)) ||
+    /(肌酐|尿素氮|尿素|尿酸)/.test(text)
+  ) return "Kidney Function"
+  if (
+    ["GLU", "HBA1C", "TC", "TG", "LDL", "HDL"].some((token) => codeTokens.has(token)) ||
+    /(血糖|葡萄糖|胆固醇)/.test(text)
+  ) return "Metabolic"
+  if (
+    ["MPV", "PDW", "P-LCC", "PLT", "PCT-PLT"].some((token) => codeTokens.has(token)) ||
+    /(血小板|大血小板|平均血小板|血小板比容)/.test(text)
+  ) return "Platelet Indices"
+  if (
+    ["MCV", "MCH", "MCHC", "RDW", "RDW-SD", "RDW-CV"].some((token) => codeTokens.has(token)) ||
+    /(红细胞体积分布宽度|平均红细胞体积|平均红细胞血红蛋白)/.test(text)
+  ) return "Red Cell Indices"
+  if (
+    ["NEUT", "NEUT%", "NEUT#", "LYMPH", "LYMPH%", "LYMPH#", "MONO", "MONO%", "MONO#", "EOS", "EOS%", "EOS#", "BASO", "BASO%", "BASO#", "ALY%"].some((token) =>
+      codeTokens.has(token),
+    ) ||
+    /(中性粒细胞|淋巴细胞|单核细胞|嗜酸性粒细胞|嗜碱性粒细胞|异型淋巴细胞)/.test(text)
+  ) {
     return "CBC Differential"
   }
-  if (/(WBC|RBC|HGB|HCT|NRBC|白细胞|红细胞|血红蛋白|有核红细胞)/.test(text)) return "CBC Core"
-  if (/(TSH|FT3|FT4|甲状腺)/.test(text)) return "Endocrine"
-  if (/(NA|K|CL|CA|MG|P|AG|OSM|HCO3|钠|钾|氯|钙|镁|磷|阴离子间隙|渗透压|碳酸氢盐)/.test(text)) return "Electrolytes"
-  if (/(PA|PREALBUMIN|前白蛋白)/.test(text)) return "Nutrition"
+  if (
+    ["WBC", "RBC", "HGB", "HCT", "NRBC", "NRBC%", "NRBC#"].some((token) => codeTokens.has(token)) ||
+    /(白细胞|红细胞|血红蛋白|有核红细胞)/.test(text)
+  ) return "CBC Core"
+  if (["TSH", "FT3", "FT4"].some((token) => codeTokens.has(token)) || /甲状腺/.test(text)) return "Endocrine"
+  if (
+    ["NA", "K", "CL", "CA", "MG", "P", "AG", "OSM", "HCO3", "HCO3-"].some((token) => codeTokens.has(token)) ||
+    /(钠|钾|氯|钙|镁|血磷|无机磷|阴离子间隙|渗透压|碳酸氢盐)/.test(text)
+  ) return "Electrolytes"
+  if (["PA", "PREALBUMIN"].some((token) => codeTokens.has(token)) || /前白蛋白/.test(text)) return "Nutrition"
 
   return examType === "Clinical" ? "Clinical Other" : "Other"
 }
@@ -239,10 +275,35 @@ function mergeDuplicateResults(results) {
   return [...merged.values()]
 }
 
-export function normalizeExtractDocMulti(rawResponse, { examType }) {
+function dedupeUnknownBiomarkers(items) {
+  const merged = new Map()
+
+  for (const item of items) {
+    const key = `${item.code}|${item.rawName}|${item.unit}|${item.referenceText}`
+    const existing = merged.get(key)
+
+    if (!existing) {
+      merged.set(key, {
+        ...item,
+        occurrences: 1,
+      })
+      continue
+    }
+
+    merged.set(key, {
+      ...existing,
+      occurrences: existing.occurrences + 1,
+    })
+  }
+
+  return [...merged.values()]
+}
+
+export function normalizeExtractDocMultiDetailed(rawResponse, { examType }) {
   const response = rawResponse?.Response ?? rawResponse ?? {}
   const structuralList = Array.isArray(response.StructuralList) ? response.StructuralList : []
   const rows = structuralList.flatMap((item) => extractFieldsFromGroupContainer(item))
+  const unknownBiomarkers = []
 
   const results = rows
     .map((fields) => {
@@ -258,12 +319,26 @@ export function normalizeExtractDocMulti(rawResponse, { examType }) {
 
       const resolved = resolveCodeAndName(rawName)
       const normalizedReferenceText = `${referenceText}`.trim() || resolved.referenceText || ""
+      const category = resolved.category || fallbackCategory(rawName, examType)
+
+      if (!resolved.matched) {
+        unknownBiomarkers.push({
+          code: resolved.code,
+          rawName: cleanLabelText(rawName),
+          normalizedName: resolved.name,
+          category,
+          value,
+          rawValue: `${rawValue}`.trim(),
+          unit: `${unit}`.trim(),
+          referenceText: normalizedReferenceText,
+        })
+      }
 
       return {
         id: `scan_${randomUUID().slice(0, 8)}`,
         code: resolved.code,
         name: resolved.name,
-        category: resolved.category || fallbackCategory(rawName, examType),
+        category,
         value,
         unit: `${unit}`.trim(),
         referenceText: normalizedReferenceText,
@@ -272,5 +347,12 @@ export function normalizeExtractDocMulti(rawResponse, { examType }) {
     })
     .filter(Boolean)
 
-  return mergeDuplicateResults(results)
+  return {
+    results: mergeDuplicateResults(results),
+    unknownBiomarkers: dedupeUnknownBiomarkers(unknownBiomarkers),
+  }
+}
+
+export function normalizeExtractDocMulti(rawResponse, options) {
+  return normalizeExtractDocMultiDetailed(rawResponse, options).results
 }
